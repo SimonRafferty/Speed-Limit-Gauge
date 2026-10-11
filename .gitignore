@@ -1,0 +1,8 @@
+data/
+Backups/
+.env
+.claude/settings.local.json
+__pycache__/
+*.pyc
+.venv/
+build/
