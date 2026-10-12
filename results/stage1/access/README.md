@@ -40,7 +40,7 @@ Details:
 | All classes | 110 | 2,100 | 33 | 239 | 11,477 |
 | Tracks | 69 | 775 | 0 | 86 | 1,688 |
 
-- **Yellow X mostly comes from access tags.** 1,786 km is from access tags and 314 km from a designation alone. By highway class it is mostly `service` (driveways and parking aisles) and `residential`, then tracks.
+- **Yellow X mostly comes from access tags.** 1,786 km is from access tags and 314 km from a designation alone. By highway class it is mostly `service` (1,059 km: driveways, parking aisles), then `track` (775 km), then `residential` (200 km).
 - **Tracks have almost no speed tagging** (0–0.6 % of km usable, except London at 12.5 % of 6.8 km). Tracks use the national limit for the mode (spec §7.1a).
 - **No track in any test area carries a `:conditional` rule.** The 58 distinct conditional values are almost all school-street windows, for example `no @ (Mo-Fr 08:30-09:30,15:00-16:00; SH off)`. There are no seasonal green-lane TROs in these areas.
 
