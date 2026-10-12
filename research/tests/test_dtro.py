@@ -1,0 +1,76 @@
+from slg.dtro import DtroClient, speed_provisions
+
+RECORD_V5 = {
+    "id": "abc",
+    "schemaVersion": "5.0.0",
+    "data": {"source": {"provision": [
+        {"reference": "P1", "actionType": "new",
+         "regulation": [{"regulationType": "speedLimitValueBased", "isDynamic": False,
+                         "speedLimitValueBased": {"mphValue": 20, "type": "maximumSpeedLimit",
+                                                  "nature": "permanent"}}],
+         "regulatedPlace": [{"linearGeometry": {
+             "linestring": "SRID=27700;LINESTRING(444284 333253, 444300 333260)"}}]},
+        {"reference": "P2", "actionType": "new",
+         "regulation": [{"regulationType": "kerbsideLimitedWaiting"}],
+         "regulatedPlace": []},
+        {"reference": "P3", "actionType": "new",
+         "regulation": [{"regulationType": "speedLimitProfileBased",
+                         "speedLimitProfileBased": {"type": "nationalSpeedLimitSingleCarriageway"}}],
+         "regulatedPlace": [{"polygon": {"polygon": "SRID=27700;POLYGON((0 0, 1 0, 1 1, 0 0))"}}]},
+    ]}},
+}
+
+RECORD_V3 = {
+    "id": "old", "schemaVersion": "3.3.0",
+    "data": {"source": {"provision": [
+        {"reference": "Q1", "regulation": [{"generalRegulation": {"regulationType": "speedLimitValueBased"},
+                                            "speedLimitValueBased": {"mphValue": 30, "type": "maximumSpeedLimit"}}],
+         "regulatedPlace": []},
+    ]}},
+}
+
+
+def test_speed_provisions_v5():
+    out = speed_provisions(RECORD_V5)
+    assert [p["provision_ref"] for p in out] == ["P1", "P3"]
+    assert out[0]["mph"] == 20 and out[0]["limit_type"] == "maximumSpeedLimit"
+    assert out[0]["geometries"] == ["SRID=27700;LINESTRING(444284 333253, 444300 333260)"]
+    assert out[1]["mph"] is None and out[1]["limit_type"] == "nationalSpeedLimitSingleCarriageway"
+    assert out[1]["geometries"][0].startswith("SRID=27700;POLYGON")
+
+
+def test_speed_provisions_pre_v5():
+    out = speed_provisions(RECORD_V3)
+    assert out[0]["mph"] == 30 and out[0]["schema_version"] == "3.3.0"
+
+
+class _Resp:
+    def __init__(self, payload):
+        self._payload = payload
+    def raise_for_status(self):
+        pass
+    def json(self):
+        return self._payload
+
+
+class _Session:
+    def __init__(self):
+        self.posts = 0
+        self.gets = []
+    def post(self, url, auth, data, timeout):
+        self.posts += 1
+        assert url == "https://dtro-integration.dft.gov.uk/v1/oauth-generator"
+        assert auth == ("id", "secret") and data == {"grant_type": "client_credentials"}
+        return _Resp({"access_token": "tok", "expires_in": "1799"})
+    def get(self, url, headers, timeout):
+        self.gets.append((url, headers["Authorization"]))
+        return _Resp("https://storage.example/all.csv")
+
+
+def test_client_caches_token_and_gets_all_url():
+    s = _Session()
+    c = DtroClient("id", "secret", env="integration", session=s)
+    assert c.all_records_url() == "https://storage.example/all.csv"
+    c.all_records_url()
+    assert s.posts == 1
+    assert s.gets[0] == ("https://dtro-integration.dft.gov.uk/v1/dtros/all", "Bearer tok")
