@@ -1350,6 +1350,17 @@ git commit -m "feat(stage1): OSM height/width/weight restriction coverage"
 
 ---
 
+### Task 9c: Tracks, access legality and restriction fixes
+
+Added 2026-10-12 (spec §7.1a). Implemented from the requirements below (agreed with the controller rather than pre-written code):
+
+1. Restriction fixes from the Task 9b review: effective height/width = min(signed, `:physical`); plausibility bounds in `slg.restrictions` (heights/widths 1.0–10 m, weights 0.5–60 t, inches < 12, else None); extra formats (comma decimal, curly quotes/primes, `tonnes`/`tons`/`cwt`, `cm`); placeholders reported separately from parse failures; three-state node location (on drivable way / on other way / on no way); `widths_below_2_0m`; integer CSV columns.
+2. Add `track` to DRIVABLE and ROAD_CLASS; extend TAG_KEYS with `access`, `motor_vehicle`, `motorcar`, `vehicle`, `motor_vehicle:conditional`, `motorcar:conditional`, `vehicle:conditional`, `access:conditional`, `designation`, `prow_ref`, `tracktype`, `surface`. Re-extract and re-run Task 7 (coverage tables will now include a `track` class; other classes must be unchanged).
+3. New `slg.access`: classify a way's motor-vehicle legality as `prohibited` / `conditional` / `allowed` / `unknown` from those tags (private/destination/permissive are not prohibited), with tests. Script `research/stage1/osm_access.py`: per area km of track, tagged-speed share on tracks, km and counts by legality class and designation, list of distinct `:conditional` values (to size the parser needed later).
+4. Extend Task 11b's D-TRO extraction to prohibition orders (`motorVehiclesProhibited`, `movementOrderProhibitedAccess`, `miscRoadClosure`, `miscPROWClosure`, `bannedMovementNoEntry`), keeping their time validity, and count them by type and permanent vs temporary.
+
+---
+
 ### Task 10: D-TRO client and speed-provision parser
 
 API facts (from `github.com/pa-digital/dft-dtro-api-docs`, `api_quickstart.rst` and `a_tour_of_the_data_model.rst`):
@@ -1988,7 +1999,7 @@ git add results/stage1/mapillary 2>/dev/null; git commit -m "feat(stage1): Mapil
 
 Desk research, one card per source, in `results/stage1/sources/<source>.md`. Use WebSearch/WebFetch. Where a source is openly downloadable and carries speed limits, download a sample for one test area into `data/stage1/<source>/` and run it through `slg.agreement` the same way as Tasks 11–12 (point or line geometry → `to_bng` if WGS84 → `snap_to_ways` → `compare`), saving `agreement.csv` beside the card.
 
-Sources: `osm` (summarise Tasks 7–8), `dtro` (docs-based until credentials arrive; must answer: is there an incremental / changed-since query, or only the full `/dtros/all` dump? how big is the dump? — this sets the patch-build design in Stage 5), `mapillary`, `national_highways` (motorway/trunk limits, variable/smart-motorway data), `os_open_roads` (form of way: dual carriageway, slip, roundabout — input for Stage 2, not limits), `wales_20mph` (DataMapWales default-20 layer and post-2024 reversions), `scotland_20mph` (Transport Scotland / council layers), `west_sussex_cc` (council open data), `commercial` (TomTom/HERE/Google: licence and cost only, as a reference point).
+Sources: `osm` (summarise Tasks 7–8), `dtro` (docs-based until credentials arrive; must answer: is there an incremental / changed-since query, or only the full `/dtros/all` dump? how big is the dump? — this sets the patch-build design in Stage 5), `mapillary`, `national_highways` (motorway/trunk limits, variable/smart-motorway data), `os_open_roads` (form of way: dual carriageway, slip, roundabout — input for Stage 2, not limits), `wales_20mph` (DataMapWales default-20 layer and post-2024 reversions), `scotland_20mph` (Transport Scotland / council layers), `west_sussex_cc` (council open data), `commercial` (TomTom/HERE/Google: licence and cost only, as a reference point), `rights_of_way` (council definitive maps / rowmaps.com, TRF Trailwise, GLASS: byway status and seasonal TROs).
 
 **Files:**
 - Create: `results/stage1/sources/<source>.md` × 9

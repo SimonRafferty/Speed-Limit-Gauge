@@ -174,6 +174,17 @@ The gauge warns when the road ahead has a height, width or weight restriction th
   - *Match certainty:* warn only when the restriction lies on the confidently matched way or its single unambiguous continuation in the direction of travel. At a fork where only one branch carries the restriction, wait until the matcher has settled on that branch. Accepted trade-off: a warning may arrive just after a junction rather than before it.
 - **Display:** flash the restriction roundel itself (UK height/width signs show feet-and-inches, weight signs tonnes), alternating with the speed limit, until the restriction is passed or the route diverges from it.
 
+### 7.1a Tracks / green lanes and "not legal now" (added 2026-10-12)
+
+- **Tracks are in scope:** `highway=track` (byways, green lanes, unsurfaced roads) is matched like any other road, for speed and for restriction warnings.
+- **Speed on tracks:** the national single-carriageway limit for the current mode (Car 60, Commercial/Trailer 50) unless a lower limit is tagged or ordered. This is a deliberate user choice; it overrides the "?" behaviour for untagged tracks.
+- **Red X — not legal to drive here now:** when the matched way is legally closed to motor vehicles at the current date/time, the dial shows a large red X (same footprint as the numeral) in place of the limit. Sources:
+  - D-TRO orders: `motorVehiclesProhibited`, `movementOrderProhibitedAccess`, `miscRoadClosure`, `miscPROWClosure`, honouring their time validity (seasonal and temporary orders, evaluated against GPS date/time). `bannedMovementNoEntry` applies in its direction only.
+  - OSM: `motor_vehicle`/`motorcar`/`vehicle`/`access` = `no` and their `:conditional` forms (evaluated now, e.g. seasonal green-lane TROs `motor_vehicle:conditional=no @ (Oct-Apr)`); rights-of-way designations that exclude motor vehicles (`restricted_byway`, `public_bridleway`, `public_footpath`).
+  - Not a red X: `access=private` / `destination` / `permissive` (lawful with permission), and anything ambiguous or unparseable.
+- Same certainty rule as restrictions: only a definite, currently-in-force prohibition on the confidently matched way shows the red X.
+- Applies to any matched way, not only tracks (road closures, timed bus gates, school streets).
+
 ### 7.2 Vehicle profile and setup screens (added 2026-10-12)
 
 Profile values (NVS, written only when changed):
