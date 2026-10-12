@@ -44,6 +44,7 @@ def ways_in_area(pbf: Path, area: Area) -> list[dict]:
     """Drivable ways with at least one node inside the area bbox."""
     fp = (osmium.FileProcessor(str(pbf))
           .with_locations()
+          .with_filter(osmium.filter.EntityFilter(osmium.osm.WAY))
           .with_filter(osmium.filter.KeyFilter("highway")))
     rows = []
     for obj in fp:

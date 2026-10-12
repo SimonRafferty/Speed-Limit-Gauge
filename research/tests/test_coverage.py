@@ -49,3 +49,21 @@ def test_freshness():
     f = freshness(annotate(_df()), now).set_index("road_class")
     assert f.loc["trunk", "tagged_ways_with_ts"] == 2
     assert f.loc["trunk", "pct_edited_2y"] == pytest.approx(50.0)
+
+
+def test_usable_excludes_variable_and_ambiguous():
+    df = pd.DataFrame({
+        "way_id": [1, 2, 3], "area": ["a"] * 3,
+        "highway": ["tertiary"] * 3,
+        "maxspeed": ["signals", "50", "30 mph"],
+        "maxspeed:forward": [None] * 3, "maxspeed:backward": [None] * 3,
+        "length_m": [1000.0, 1000.0, 2000.0],
+        "timestamp": [None] * 3,
+    })
+    a = annotate(df)
+    assert list(a["tagged"]) == [True, True, True]
+    assert list(a["usable"]) == [False, False, True]
+    t = coverage_by_class(a).set_index("road_class")
+    assert t.loc["tertiary", "pct_km_tagged"] == pytest.approx(100.0)
+    assert t.loc["tertiary", "pct_km_usable"] == pytest.approx(50.0)
+    assert t.loc["tertiary", "ways_usable"] == 1
