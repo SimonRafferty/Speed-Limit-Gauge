@@ -168,7 +168,9 @@ The gauge warns when the road ahead has a height, width or weight restriction th
 - **Sources:** OSM `maxheight` / `maxwidth` / `maxweight` (+ `:physical`, `maxweightrating`, `maxweight:hgv`) on ways and on nodes (e.g. `barrier=height_restrictor` at car parks); D-TRO `dimensionMaximum*` orders (height structural / with TRO, width, length, weight environmental / structural). Measured in Stage 1 Tasks 9b and 11b.
 - **Applicability:** weight limits that apply only to goods vehicles (OSM `maxweight:hgv`, D-TRO environmental weight limits, lorry-symbol signs) are checked only in Commercial mode; structural / all-vehicle limits in every mode.
 - **Look-ahead:** check the matched way and its continuation in the direction of travel for roughly the next 300–500 m (tuned in Stage 4), so the warning comes before the restriction, not at it.
-- **Error asymmetry is the reverse of speed limits:** a missed restriction is the costly failure, a false alarm is cheap. Warn when any plausible match candidate ahead carries a violated restriction, not only the most likely one.
+- **Warn only when certain (user decision 2026-10-12: false alarms make it annoying and ignored):**
+  - *Data certainty:* only a numeric, parsed restriction value can warn. Placeholders (`default`, `below_default`, `none`, `no_sign`, `no_indications`, `unsigned`) and unparseable values never warn. Restrictions that don't apply to the current mode (e.g. goods-only weight limits outside Commercial mode) never warn.
+  - *Match certainty:* warn only when the restriction lies on the confidently matched way or its single unambiguous continuation in the direction of travel. At a fork where only one branch carries the restriction, wait until the matcher has settled on that branch. Accepted trade-off: a warning may arrive just after a junction rather than before it.
 - **Display:** flash the restriction roundel itself (UK height/width signs show feet-and-inches, weight signs tonnes), alternating with the speed limit, until the restriction is passed or the route diverges from it.
 
 ### 7.2 Vehicle profile and setup screens (added 2026-10-12)
