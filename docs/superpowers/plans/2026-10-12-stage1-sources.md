@@ -13,6 +13,8 @@
 **Conventions:**
 - All commands run from the repo root in Git Bash (Windows).
 - Python is always `.venv/Scripts/python` (the repo venv).
+- Scripts import `slg` via a `.pth` file in the venv (`.venv/Lib/site-packages/slg-research.pth` containing the absolute path of `research/`), created once after Task 1: `P=$(.venv/Scripts/python -c "import site;print(site.getsitepackages()[-1])"); printf '%s
+' "$(pwd -W)/research" > "$P/slg-research.pth"`.
 - `data/` is git-ignored (large downloads). `results/` is committed.
 - Each stage's results folder ends with a `notes.md`: what was tried, what happened, failed avenues included.
 
