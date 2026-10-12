@@ -1,0 +1,5 @@
+regulation_type,limit_type,nature,provisions
+speedLimitProfileBased,nationalSpeedLimit,,76
+speedLimitValueBased,maximumSpeedLimit,permanent,2768
+speedLimitValueBased,maximumSpeedLimit,temporary,2273
+speedLimitValueBased,nationalSpeedLimitWellLitStreetDefault,permanent,112

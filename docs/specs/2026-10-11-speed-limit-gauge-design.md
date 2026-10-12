@@ -110,6 +110,8 @@ Stage 2 uses OSM-tagged ways as truth. For user recordings, build a hand-checked
 
 Revised 2026-10-12 after the microSD slot was confirmed. The device is **offline-first**: it never needs a signal to work; connectivity is only used to receive updates.
 
+Card in use (checked 2026-10-12): 16 GB, FAT32 (MBR), 8 KB clusters — FAT32 is what the ESP32 FatFs handles natively, so keep it (no exFAT). Tiles are stored in a small number of large pack files with an index, not one file per tile: fewer directory/FAT updates per write (less to corrupt), no 8 KB-cluster slack per tile, faster open/seek on the ESP32.
+
 Storage: full-GB base tile set on microSD (expected 100–300 MB, to be measured; a high-endurance/industrial card is recommended for under-dash temperatures). 8 MB PSRAM holds the working set of tiles around the vehicle. Onboard flash holds firmware, NVS settings and the version manifest only.
 
 Tiles: fixed grid, cell size chosen in Stage 5 from measured bytes per tile and read latency from SD (expected 2–5 km). Delta-encoded integer geometry, simplified to a tolerance Stage 3 shows is harmless to matching. Each way has a stable id so patches can address it.
@@ -153,11 +155,66 @@ UI on 466×466 round AMOLED:
 | Known limit | Full-bleed red ring, white disc, bold black numeral (free font close to DfT Transport Medium) |
 | National-limit road | The number for the current mode (e.g. 60/70, or 50/60 in Trailer mode) — not the NSL diagonal-bar sign |
 | Overspeed | Disc turns JCB yellow (#FCB712, verify on panel) when GPS speed > limit + 2 mph sustained for 2 s; returns to white at or below the limit. Suppressed when basis is held or confidence is low |
-| Unknown | Red ring, grey "– –" |
-| No GPS fix | Unknown appearance plus small satellite icon |
+| Unknown / uncertain | Red ring, white disc, a "?" in the same font, size and colour as the numeral (user decision 2026-10-12). Shown whenever the estimator outputs unknown, including when candidates disagree past the hold timeout or confidence is too low to commit |
+| No GPS fix | "?" plus small satellite icon |
+| SD card fault | "?" plus small SD-card icon |
 | Mode pictogram | Small car / van / car+trailer below the numeral |
 
 Interaction: vertical swipe cycles Car → Commercial → Trailer. Selected mode persisted in NVS.
+
+### 7.1 Height, width and weight restriction warnings (added 2026-10-12)
+
+The gauge warns when the road ahead has a height, width or weight restriction the current vehicle configuration exceeds.
+
+- **Sources:** OSM `maxheight` / `maxwidth` / `maxweight` (+ `:physical`, `maxweightrating`, `maxweight:hgv`) on ways and on nodes (e.g. `barrier=height_restrictor` at car parks); D-TRO `dimensionMaximum*` orders (height structural / with TRO, width, length, weight environmental / structural). Measured in Stage 1 Tasks 9b and 11b.
+- **Applicability:** weight limits that apply only to goods vehicles (OSM `maxweight:hgv`, D-TRO environmental weight limits, lorry-symbol signs) are checked only in Commercial mode; structural / all-vehicle limits in every mode.
+- **Look-ahead:** check the matched way and its continuation in the direction of travel for roughly the next 300–500 m (tuned in Stage 4), so the warning comes before the restriction, not at it.
+- **Warn only when certain (user decision 2026-10-12: false alarms make it annoying and ignored):**
+  - *Data certainty:* only a numeric, parsed restriction value can warn. Placeholders (`default`, `below_default`, `none`, `no_sign`, `no_indications`, `unsigned`) and unparseable values never warn. Restrictions that don't apply to the current mode (e.g. goods-only weight limits outside Commercial mode) never warn.
+  - *Match certainty:* warn only when the restriction lies on the confidently matched way or its single unambiguous continuation in the direction of travel. At a fork where only one branch carries the restriction, wait until the matcher has settled on that branch. Accepted trade-off: a warning may arrive just after a junction rather than before it.
+- **Display:** flash the restriction roundel itself (UK height/width signs show feet-and-inches, weight signs tonnes), alternating with the speed limit, until the restriction is passed or the route diverges from it.
+
+### 7.1a Tracks / green lanes and "not legal now" (added 2026-10-12)
+
+- **Tracks are in scope:** `highway=track` (byways, green lanes, unsurfaced roads) is matched like any other road, for speed and for restriction warnings.
+- **Speed on tracks:** the national single-carriageway limit for the current mode (Car 60, Commercial/Trailer 50) unless a lower limit is tagged or ordered. This is a deliberate user choice; it overrides the "?" behaviour for untagged tracks.
+- **Red X — not legal to drive here now:** when the matched way is legally closed to motor vehicles at the current date/time, the dial shows a large red X (same footprint as the numeral) in place of the limit. Sources:
+  - D-TRO orders: `motorVehiclesProhibited`, `movementOrderProhibitedAccess`, `miscRoadClosure`, `miscPROWClosure`, honouring their time validity (seasonal and temporary orders, evaluated against GPS date/time). `bannedMovementNoEntry` applies in its direction only.
+  - OSM: `motor_vehicle`/`motorcar`/`vehicle`/`access` = `no` and their `:conditional` forms (evaluated now, e.g. seasonal green-lane TROs `motor_vehicle:conditional=no @ (Oct-Apr)`); (rights-of-way designations alone are NOT a red X — see yellow X).
+  - Not a red X: anything ambiguous or unparseable, and the permission-only cases below.
+- **JCB-yellow X — legal only with permission (user decision 2026-10-12):** same footprint, shown when the most specific motor access key (`motorcar` > `motor_vehicle` > `vehicle` > `access`) is `private`, `permit`, `destination` ("except for access"), `customers`, `delivery`, `agricultural` or `forestry`, and also wherever the ONLY evidence is a rights-of-way designation (`public_footpath`, `public_bridleway`, `restricted_byway`) with no access tags — such ways are often private drives/estate roads/lanes driven with lawful authority (user decision 2026-10-12, after Stage 1 found 308 of 419 red-X km came from designation alone). An explicit access value overrides the designation. `permissive` and `yes` show no X.
+- Precedence: red X > speed numeral. Yellow X is a **small badge** at the edge of the dial when a speed limit is known (the numeral stays), and full-size only where no speed limit is known (user decision 2026-10-12: private car parks, drives and except-for-access streets are common). Yellow X requires the confident-match rule. Overspeed yellow background applies to the numeral only.
+- Same certainty rule as restrictions: only a definite, currently-in-force prohibition on the confidently matched way shows the red X.
+- Applies to any matched way, not only tracks (road closures, timed bus gates, school streets).
+
+### 7.2 Vehicle profile and setup screens (added 2026-10-12)
+
+Profile values (NVS, written only when changed):
+
+| Setting | Default | Step | Shown as |
+|---|---|---|---|
+| Vehicle height | 2.20 m | 0.05 m | m and ft/in |
+| Vehicle width (body, excluding mirrors, as UK width limits are measured) | 1.79 m | 0.05 m | m and ft/in |
+| Vehicle gross weight | 3,000 kg | 100 kg | kg and t |
+| Trailer height | 2.20 m | 0.05 m | m and ft/in |
+| Trailer width | 1.79 m | 0.05 m | m and ft/in |
+| Train weight (vehicle + trailer) | 6,500 kg | 100 kg | kg and t |
+
+What each mode checks:
+
+| Mode | Height | Width | Weight | Speed limits (single / dual / motorway) |
+|---|---|---|---|---|
+| Car | vehicle | vehicle | vehicle gross | 60 / 70 / 70 |
+| Commercial | vehicle | vehicle | vehicle gross (also goods-only limits) | 50 / 60 / 70 |
+| Trailer | max(vehicle, trailer) | max(vehicle, trailer) | train weight | 50 / 60 / 60 |
+
+Setup interaction:
+
+- **Enter:** long-press the dial (~2 s), only when stationary (GPS speed < ~3 mph); ignored otherwise.
+- **Navigate:** one setting per screen; horizontal swipe between screens (vertical swipe remains mode change on the main dial only).
+- **Adjust:** large on-screen ▲ / ▼ touch buttons; hold to auto-repeat with acceleration. Value drawn inside a red-ring roundel in the style of the matching sign.
+- **Exit:** long-press again, or automatically after ~20 s without a touch or as soon as the vehicle moves (> ~3 mph). Always returns to the speed dial; changes saved to NVS on exit.
+- Follow the Td5 display lesson: delete non-current LVGL screens when switching.
 
 ## 8. Error handling
 

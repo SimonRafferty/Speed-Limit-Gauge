@@ -1,0 +1,3 @@
+area,src_polygons,osm_ways,excluded_ways,n,agree,osm_higher,osm_lower,osm_untagged,osm_unusable,national_consistent,national_conflict
+cardiff,17,5763,6959,497,372,20,23,82,0,0,0
+powys_rural,13,1000,2719,38,36,0,2,0,0,0,0

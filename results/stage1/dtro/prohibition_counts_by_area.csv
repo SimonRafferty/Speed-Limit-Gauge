@@ -1,0 +1,11 @@
+area,regulation_type,nature,has_vehicle_condition,provisions
+a27_chichester_worthing,miscRoadClosure,temporary,False,397
+crawley,miscRoadClosure,temporary,False,144
+horsham,miscRoadClosure,temporary,False,58
+m23_a23_crawley_brighton,miscRoadClosure,temporary,False,194
+m25_surrey,miscRoadClosure,temporary,False,306
+manchester_centre,miscPROWClosure,temporary,False,1
+manchester_centre,miscRoadClosure,proposed,False,12
+manchester_centre,miscRoadClosure,temporary,False,630
+manchester_centre,movementOrderProhibitedAccess,permanent,False,6
+midhurst_downs,miscRoadClosure,temporary,False,52

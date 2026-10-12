@@ -1,0 +1,13 @@
+area,country,condition,track_ways,track_km,track_pct_km_tagged,track_pct_km_usable,track_prohibited_km,track_prohibited_ways,track_permission_km,track_permission_ways,track_conditional_km,track_conditional_ways,track_allowed_km,track_allowed_ways,track_unknown_km,track_unknown_ways,all_prohibited_km,all_prohibited_ways,all_permission_km,all_permission_ways,all_conditional_km,all_conditional_ways,all_allowed_km,all_allowed_ways,all_unknown_km,all_unknown_ways
+london_camden_islington,england,urban,47,6.75,12.5,12.5,1.97,9,2.22,19,0.0,0,0.0,0,2.57,19,9.07,228,93.54,2037,14.01,198,25.72,424,733.94,12950
+manchester_centre,england,urban,17,1.25,0.0,0.0,0.06,1,0.81,8,0.0,0,0.0,0,0.39,8,5.18,80,81.19,3015,1.1,20,4.76,65,509.6,8099
+crawley,england,suburban,267,69.92,0.0,0.0,0.0,0,49.78,151,0.0,0,5.37,18,14.77,98,1.34,25,122.56,1170,0.06,1,5.96,27,600.64,7695
+horsham,england,suburban,96,18.41,0.0,0.0,0.03,1,17.18,83,0.0,0,0.55,1,0.64,11,1.55,23,79.3,765,0.0,0,2.09,18,290.12,3240
+midhurst_downs,england,rural,567,235.51,0.6,0.6,9.46,17,135.34,313,0.0,0,9.1,21,81.6,216,10.23,23,173.56,541,0.0,0,13.23,31,327.67,1374
+m23_a23_crawley_brighton,england,motorway_trunk,1626,329.75,0.6,0.6,17.51,77,215.12,956,0.0,0,8.22,32,88.9,561,18.57,89,316.41,2058,0.59,2,16.65,106,1020.85,8372
+a27_chichester_worthing,england,motorway_trunk,666,167.38,0.0,0.0,6.46,12,78.01,270,0.0,0,1.8,6,81.11,378,9.22,73,204.42,1597,0.0,0,9.35,57,1415.0,11110
+m25_surrey,england,motorway_trunk,974,192.69,0.5,0.5,14.32,43,94.74,475,0.0,0,5.06,26,78.58,430,19.21,79,546.61,6151,12.13,8,32.81,224,1829.35,17125
+cardiff,wales,urban,135,32.29,0.0,0.0,1.38,6,20.42,85,0.0,0,0.0,0,10.49,44,5.54,68,129.4,1392,0.0,0,25.02,175,935.6,11087
+powys_rural,wales,rural,1002,388.28,0.0,0.0,7.18,18,118.93,335,0.0,0,37.59,46,224.57,603,10.01,27,189.93,665,0.0,0,63.44,116,921.7,2911
+edinburgh,scotland,urban,71,5.94,0.0,0.0,1.94,9,1.26,18,0.0,0,0.0,0,2.73,44,7.41,75,60.63,1023,5.18,12,11.15,133,647.38,7946
+a9_perth_pitlochry,scotland,motorway_trunk,2758,1169.35,0.0,0.0,8.44,22,40.67,81,0.0,0,18.16,9,1102.08,2646,12.35,38,102.11,413,0.0,0,28.92,46,2245.23,8240
