@@ -155,8 +155,9 @@ UI on 466×466 round AMOLED:
 | Known limit | Full-bleed red ring, white disc, bold black numeral (free font close to DfT Transport Medium) |
 | National-limit road | The number for the current mode (e.g. 60/70, or 50/60 in Trailer mode) — not the NSL diagonal-bar sign |
 | Overspeed | Disc turns JCB yellow (#FCB712, verify on panel) when GPS speed > limit + 2 mph sustained for 2 s; returns to white at or below the limit. Suppressed when basis is held or confidence is low |
-| Unknown | Red ring, grey "– –" |
-| No GPS fix | Unknown appearance plus small satellite icon |
+| Unknown / uncertain | Red ring, white disc, a "?" in the same font, size and colour as the numeral (user decision 2026-10-12). Shown whenever the estimator outputs unknown, including when candidates disagree past the hold timeout or confidence is too low to commit |
+| No GPS fix | "?" plus small satellite icon |
+| SD card fault | "?" plus small SD-card icon |
 | Mode pictogram | Small car / van / car+trailer below the numeral |
 
 Interaction: vertical swipe cycles Car → Commercial → Trailer. Selected mode persisted in NVS.
