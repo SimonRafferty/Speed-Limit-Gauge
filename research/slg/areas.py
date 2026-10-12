@@ -27,7 +27,7 @@ AREAS: list[Area] = [
     Area("m23_a23_crawley_brighton", "motorway_trunk", "england",
          ("england/west-sussex", "england/east-sussex"), (-0.22, 50.84, -0.12, 51.10)),
     Area("a27_chichester_worthing", "motorway_trunk", "england", ("england/west-sussex",), (-0.80, 50.81, -0.36, 50.87)),
-    Area("m25_surrey", "motorway_trunk", "england", ("england/surrey",), (-0.50, 51.29, -0.30, 51.35)),
+    Area("m25_surrey", "motorway_trunk", "england", ("england/surrey",), (-0.52, 51.28, -0.20, 51.39)),
     Area("cardiff", "urban", "wales", ("wales",), (-3.25, 51.45, -3.13, 51.52)),
     Area("powys_rural", "rural", "wales", ("wales",), (-3.55, 52.20, -3.25, 52.40)),
     Area("edinburgh", "urban", "scotland", ("scotland",), (-3.25, 55.92, -3.13, 55.97)),

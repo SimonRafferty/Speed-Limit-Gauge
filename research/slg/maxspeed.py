@@ -5,7 +5,11 @@ kind values:
   nsl_single  - GB:nsl_single (national limit, single carriageway)
   nsl_dual    - GB:nsl_dual
   motorway    - GB:motorway
-  national    - national limit without carriageway type
+  national    - national limit without carriageway type. Downstream code must
+                treat it as the single-carriageway national limit (the lower
+                value), never dual carriageway or motorway.
+  nonstandard - numeric limit that is not a standard UK limit (likely a
+                tagging error); mph is None
   variable    - signals / variable (smart motorway, VMS)
   ambiguous   - bare number; km/h by OSM default but usually meant as mph in GB
   multi       - several values separated by ';'
@@ -25,6 +29,11 @@ _NATIONAL = {
     "gb:motorway": "motorway",
     "gb:national": "national",
     "national": "national",
+    "uk:nsl_single": "nsl_single",
+    "uk:nsl_dual": "nsl_dual",
+    "uk:motorway": "motorway",
+    "uk:national": "national",
+    "gb:nsl": "national",
 }
 _MPH = re.compile(r"^(\d+(?:\.\d+)?)\s*mph$")
 _KMH = re.compile(r"^(\d+(?:\.\d+)?)\s*(?:km/h|kmh|kph)$")
@@ -37,10 +46,14 @@ class Parsed:
     mph: int | None = None
 
 
-def snap_mph(mph: float) -> int:
-    """Snap a converted value to the nearest standard UK limit if within 1.5 mph."""
+def snap_mph(mph: float) -> int | None:
+    """Nearest standard UK limit if within 1.5 mph, else None."""
     nearest = min(STANDARD_MPH, key=lambda s: abs(s - mph))
-    return nearest if abs(nearest - mph) <= 1.5 else round(mph)
+    return nearest if abs(nearest - mph) <= 1.5 else None
+
+
+def _explicit_or_nonstandard(mph: int | None) -> Parsed:
+    return Parsed("nonstandard") if mph is None else Parsed("explicit", mph)
 
 
 def parse_maxspeed(raw) -> Parsed:
@@ -56,9 +69,11 @@ def parse_maxspeed(raw) -> Parsed:
     if v == "none":
         return Parsed("none")
     if m := _MPH.match(v):
-        return Parsed("explicit", round(float(m[1])))
+        val = float(m[1])
+        ok = val.is_integer() and int(val) in STANDARD_MPH
+        return _explicit_or_nonstandard(int(val) if ok else None)
     if m := _KMH.match(v):
-        return Parsed("explicit", snap_mph(float(m[1]) / KMH_PER_MPH))
+        return _explicit_or_nonstandard(snap_mph(float(m[1]) / KMH_PER_MPH))
     if _BARE.match(v):
         return Parsed("ambiguous")
     return Parsed("unparsed")
