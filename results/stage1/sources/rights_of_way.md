@@ -1,8 +1,9 @@
 # Rights of way and green lanes (definitive maps, rowmaps, TrailWise2, TRF, GLASS/LARA, seasonal TROs)
 
 What the gauge needs on green lanes: is a motor vehicle **legally allowed now** (BOAT,
-vehicular UCR), **prohibited** (footpath, bridleway, restricted byway, or a TRO - red X), or
-**allowed only with permission** (private rights - yellow X)?
+vehicular UCR), **prohibited** (an explicit no-motor-vehicles tag or a TRO - red X), or
+**allowed only with permission** (private rights; also a footpath, bridleway or restricted
+byway with no access tag, since the owner may drive it - yellow X)?
 
 | Field | Finding |
 |---|---|
@@ -24,16 +25,20 @@ vehicular UCR), **prohibited** (footpath, bridleway, restricted byway, or a TRO 
 - **Geometry:** 86-100 % of RB/BOAT length lies within 10 m of an OSM drivable/track way
   (Midhurst RB 31.3 of 33.9 km = 92 %; A27 RB 7.1 of 8.3 km = 86 %; BOATs 100 %), so
   conflation onto OSM ways works.
-- **Restricted byways -> OSM legality:** 29.6 km of OSM ways matched; **24.4 km (82 %)
-  prohibited** (red X) - all of these carry `designation=restricted_byway`; 2.5 km
-  `permission` (`motor_vehicle=private`, correct for private rights); **2.7 km `allowed`**
-  (Midhurst: tracks tagged `motorcar=yes`/`access=yes` despite RB designation - OSM tagging
-  errors or private-access lanes mis-tagged; they would wrongly show no X).
+Legality uses the current classifier, in which a footpath / bridleway / restricted-byway
+designation with no access tag is `permission` (yellow X), not `prohibited` (user decision
+2026-10-12; table refreshed after that change).
+- **Restricted byways -> OSM legality:** 29.6 km of OSM ways matched (all carry
+  `designation=restricted_byway`); **21.5 km (73 %) `permission`** (yellow X: designation
+  alone, or `motor_vehicle=private`); **5.4 km `prohibited`** (red X: an explicit `no` access
+  tag); **2.7 km `allowed`** (Midhurst: tracks tagged `motorcar=yes`/`access=yes` despite RB
+  designation - OSM tagging errors or private-access lanes mis-tagged; they would wrongly
+  show no X).
 - **BOATs:** 1.7 km matched. Horsham 0.55 km `allowed` (`designation=byway_open_to_all_traffic`,
   agrees). A27 1.1 km `prohibited`: OSM `designation=public_byway` + `motor_vehicle=no` -
   either a TRO OSM knows about or an OSM error; council data cannot tell which.
-- **Footpath/bridleway-matched ways:** 151 of 190 km prohibited, 33 km permission, 5.4 km
-  allowed (mostly public roads or private drives that a path follows).
+- **Footpath/bridleway-matched ways:** of 189.4 km, 173.5 km permission, 10.5 km prohibited,
+  5.4 km allowed (mostly public roads or private drives that a path follows).
 - OSM `designation` is missing on most tracks outside these PROW ways (e.g. Midhurst 141 of
   236 track km have none; `access/designation_by_area.csv`), which is where council data adds
   most.
