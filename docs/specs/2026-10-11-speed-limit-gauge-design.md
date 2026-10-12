@@ -33,8 +33,10 @@ Waveshare ESP32-S3-Touch-AMOLED-1.75, GPS variant ("-G"). Arrives approx. 2026-1
 | Default vehicle class | Car / dual-purpose. Rationale: Defender Hard Top is 4WD with unladen weight ≤ 2,040 kg, so it meets the dual-purpose definition (C&U Regs 1986 reg. 3) despite N1 tax class |
 | Vehicle modes | Car 60/70/70, Commercial (goods ≤ 7.5 t) 50/60/70, Trailer 50/60/60 (single / dual / motorway). Modes change only national-limit defaults, never posted limits |
 | Test traces | Synthetic + public OSM traces now; user records real drives (GPX) during the week of 2026-10-11 |
-| WiFi | Compiled-in credential list (WiFiMulti): user's phone hotspot, home WiFi (updates while parked), car-radio hotspot when SSID/password are found |
-| Data | Offline-first: full-GB base on microSD; OSM + D-TRO changes delivered as small pre-conflated patch files from static hosting |
+| WiFi | Compiled-in credential list (WiFiMulti): user's phone hotspot, car-radio hotspot when SSID/password are found. No home WiFi: the device is unpowered when parked, so all updates happen over the cellular hotspot while driving |
+| Data | Offline-first: full-GB base on microSD; OSM + D-TRO changes delivered as small pre-conflated patch files from static hosting. Device is self-updating; the SD card is loaded from the PC once at install and is not a routine update path (behind the dash) |
+| Write safety | SD writes only when GPS speed > 35 mph sustained ~10 s with a valid fix (ignition-off is implausible then); downloads staged in PSRAM until then. Atomic write-then-rename kept as a second layer (cranking brown-outs, connector faults) |
+| Firmware | OTA over the hotspot into the spare app slot, activated at next power-on (never reboots while driving), with rollback on failed boot |
 
 ## 4. Architecture
 
@@ -119,13 +121,17 @@ Update pipeline (runs on the PC, later possibly a scheduled job; never on the de
 
 The device does not talk to D-TRO directly: conflating BNG geometries onto roads is heavy, and OAuth credentials do not belong on the device.
 
-Device update behaviour:
+Device update behaviour (all over the cellular hotspot while driving; the device is unpowered when parked):
 
-- On WiFi (home WiFi while parked, phone hotspot, car-radio hotspot): fetch the manifest; download any missing patches in sequence; occasionally download a new base when the manifest says the patch chain is too long.
+- Initial base: copied to the card from the PC once at install. After that the device maintains itself; the card is not routinely removed.
+- When a connection is up: fetch the manifest; download missing patches in sequence; download individual replacement tiles where the manifest's per-tile hash differs (a base rebuild arrives as a trickle of changed tiles over many journeys). All downloads are resumable and survive dropouts.
+- Downloads land in a PSRAM staging buffer. They are committed to SD only when GPS speed has exceeded 35 mph for ~10 s with a valid fix. A power-off before commit just loses the buffer; it is re-fetched next time.
 - Patches are applied as an overlay on read (patch record wins over base record), and periodically merged into rewritten tiles.
-- Every write goes to a new file and is renamed into place; the previous base/patch set is kept until the new one verifies (hash). Power loss at ignition-off can never leave a half-written tile in use. The base is otherwise read-only.
+- Every write goes to a new file and is renamed into place; the previous tile/patch is kept until the new one verifies (hash). This second layer covers what the speed gate cannot: cranking brown-outs and connector faults.
+- Firmware OTA: downloaded in the background into the inactive app partition, marked for boot, takes effect at next power-on; ESP-IDF rollback reverts if the new image fails to confirm itself.
+- Optional hardware safety net (not relied on): a small LiPo on the AXP2101 header would give hold-up time to finish writes after ignition-off.
 
-Stage 5 measures: GB base size, bytes per tile, SD read latency per tile (on hardware), weekly `maxspeed` churn in OSM and D-TRO (to set patch cadence and expected patch size), and bytes per update.
+Stage 5 measures: GB base size, bytes per tile, SD read latency and write time per tile (on hardware), weekly `maxspeed` churn in OSM and D-TRO (to set patch cadence and expected patch size), bytes per update, and mobile data per month; plus the share of driving time above 35 mph on the user's traces (how much commit opportunity there is).
 
 Failure behaviour: no signal ever → base + last applied patches, with data age reported in the output. SD card missing or unreadable → every reading is "unknown" plus an SD-fault icon; never a guess.
 
