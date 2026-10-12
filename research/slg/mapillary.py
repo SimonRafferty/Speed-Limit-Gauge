@@ -37,8 +37,9 @@ def token() -> str | None:
 
 
 SPEED_VALUES = ",".join(
-    f"regulatory--maximum-speed-limit-{n}--g1"
-    for n in (5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70))
+    f"regulatory--maximum-speed-limit-{n}--g{g}"
+    for n in (5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70) for g in range(1, 6))
+# 60 values, about 2.6 KB of query string: well under typical 8 KB URL limits, so one request.
 LIMIT = 2000
 MAX_DEPTH = 3
 
@@ -54,8 +55,7 @@ def fetch_features(bbox, access_token: str, session=requests,
     """Speed-related map features in bbox, fetched in 0.05 degree cells.
 
     Returns (features, failed_cells, truncated_cells).
-    - The request filters speed-limit sign classes server-side (object_values; only
-      the common --g1 variants), and "speed" in object_value is still checked
+    - The request filters speed-limit sign classes server-side (object_values; --g1 to --g5 variants), and "speed" in object_value is still checked
       client-side as a fallback.
     - The API returns at most LIMIT features per request, so a cell that returns
       exactly LIMIT is split into 4 and re-queried, up to MAX_DEPTH levels. A cell

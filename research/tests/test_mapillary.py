@@ -65,7 +65,11 @@ class _DenseSession:
 def test_server_side_filter_param():
     s = _DenseSession()
     fetch_features((-0.37, 51.04, -0.32, 51.09), "tok", session=s, pause=0)
-    assert "regulatory--maximum-speed-limit-30--g1" in s.calls[0]["object_values"]
+    ov = s.calls[0]["object_values"]
+    assert "regulatory--maximum-speed-limit-30--g1" in ov
+    assert "regulatory--maximum-speed-limit-20--g3" in ov
+    assert "regulatory--maximum-speed-limit-70--g5" in ov
+    assert len(ov) < 4000  # keeps the URL well under typical limits
 
 
 def test_full_cell_is_split_into_four():
