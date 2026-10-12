@@ -200,3 +200,83 @@ def restriction_provisions(record: dict) -> list[dict]:
                            if s.startswith("SRID=")],
         })
     return out
+
+
+# Orders that close a road (or a movement along it) to motor vehicles: red X sources (spec 7.1a).
+# publicRightOfWayClosure is not in the published spec list but appears in the production
+# dump alongside miscPROWClosure with the same meaning, so it is counted too.
+PROHIBITION_TYPES = (
+    "motorVehiclesProhibited", "movementOrderProhibitedAccess", "miscRoadClosure",
+    "miscPROWClosure", "bannedMovementNoEntry", "publicRightOfWayClosure",
+)
+
+
+def order_nature(provision: dict, regulation: dict) -> str:
+    """'temporary' / 'experimental' / 'permanent' / 'unknown' for a provision.
+
+    The production dump has no explicit nature on non-speed regulations; the provision's
+    orderReportingPoint says which kind of order it is (ttroTtmo* = temporary order or
+    notice, specialEvent* = event order, permanent* / experimentalMakingPermanent).
+    """
+    orp = provision.get("orderReportingPoint") or ""
+    if orp.startswith(("ttro", "specialEvent")):
+        return "temporary"
+    if orp == "experimentalMakingPermanent" or orp.startswith("permanent"):
+        return "permanent"
+    if orp.startswith("experimental"):
+        return "experimental"
+    if regulation.get("isDynamic") is True or regulation.get("temporaryRegulation"):
+        return "temporary"
+    return "unknown"
+
+
+def _find(obj, key):
+    """First value stored under `key` anywhere in obj (depth first), else None."""
+    if isinstance(obj, dict):
+        if key in obj:
+            return obj[key]
+        for v in obj.values():
+            if (found := _find(v, key)) is not None:
+                return found
+    elif isinstance(obj, list):
+        for v in obj:
+            if (found := _find(v, key)) is not None:
+                return found
+    return None
+
+
+def _has_recurring(obj) -> bool:
+    return any(_find(obj, k) is not None for k in (
+        "recurringDayWeekMonthPeriod", "recurringTimePeriodOfDay", "recurringSpecialDay"))
+
+
+def prohibition_provisions(record: dict) -> list[dict]:
+    """One row per prohibition / closure regulation in a D-TRO record.
+
+    has_vehicle_condition marks a vehicle-class ban (e.g. over 3.5 t), not a full closure;
+    has_access_condition marks "except for access" style exemptions.
+    """
+    out = []
+    for prov, reg, rtype in _regulations(record):
+        if rtype not in PROHIBITION_TYPES:
+            continue
+        tv = _find(reg, "timeValidity")
+        tv = tv if isinstance(tv, dict) else {}
+        out.append({
+            "dtro_id": record.get("id"),
+            "schema_version": record.get("schemaVersion"),
+            "provision_ref": prov.get("reference"),
+            "action": prov.get("actionType"),
+            "regulation_type": rtype,
+            "order_reporting_point": prov.get("orderReportingPoint"),
+            "nature": order_nature(prov, reg),
+            "is_dynamic": reg.get("isDynamic"),
+            "start": tv.get("start"),
+            "end": tv.get("end"),
+            "has_recurring_period": _has_recurring(reg),
+            "has_vehicle_condition": _find(reg, "vehicleCharacteristics") is not None,
+            "has_access_condition": _find(reg, "accessCondition") is not None,
+            "geometries": [s for s in _strings(prov.get("regulatedPlace", []))
+                           if s.startswith("SRID=")],
+        })
+    return out

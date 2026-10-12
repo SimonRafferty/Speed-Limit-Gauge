@@ -1,4 +1,5 @@
-"""Stage 1: pull all D-TROs, extract speed provisions, compare with OSM.
+"""Stage 1: pull all D-TROs, extract speed, restriction and prohibition provisions,
+compare speeds with OSM.
 
 Run: .venv/Scripts/python research/stage1/dtro_pull.py [--cached]
 Needs DTRO_CLIENT_ID / DTRO_CLIENT_SECRET in .env; exits cleanly without them.
@@ -22,7 +23,8 @@ import shapely
 from slg.agreement import compare, snap_to_ways, to_bng
 from slg.areas import AREAS
 from slg.coverage import annotate
-from slg.dtro import from_env, parse_ewkt, restriction_provisions, speed_provisions
+from slg.dtro import (from_env, parse_ewkt, prohibition_provisions, restriction_provisions,
+                      speed_provisions)
 from slg.paths import DATA, RESULTS
 
 OUT = RESULTS / "stage1" / "dtro"
@@ -113,6 +115,55 @@ def agreement(df: pd.DataFrame, subset: str, outcomes: collections.Counter) -> l
     return results
 
 
+def _any_geometry(ewkt: str):
+    """D-TRO EWKT (BNG) -> shapely geometry of any kind (points included), or None."""
+    srid, _, body = ewkt.partition(";")
+    if srid.strip().upper() != "SRID=27700":
+        return None
+    try:
+        g = shapely.from_wkt(body)
+    except shapely.errors.ShapelyError:
+        return None
+    return None if g is None or g.is_empty else g
+
+
+def prohibition_area_counts(pdf: pd.DataFrame) -> pd.DataFrame:
+    """Prohibition provisions with any geometry intersecting each test area's bbox."""
+    names = [a.name for a in AREAS]
+    tree = shapely.STRtree([to_bng(shapely.box(*a.bbox)) for a in AREAS])
+    rows = []
+    for _, p in pdf.iterrows():
+        hit = set()
+        for s in p["geometries"]:
+            g = _any_geometry(s)
+            if g is not None:
+                hit.update(int(i) for i in tree.query(g, predicate="intersects"))
+        rows += [{"area": names[i], "regulation_type": p["regulation_type"], "nature": p["nature"],
+                  "has_vehicle_condition": p["has_vehicle_condition"]} for i in hit]
+    cols = ["area", "regulation_type", "nature", "has_vehicle_condition"]
+    return pd.DataFrame(rows, columns=cols).value_counts().rename("provisions").reset_index()         .sort_values(cols)
+
+
+def write_prohibitions(pdf: pd.DataFrame) -> None:
+    """Closure / prohibition orders (red X sources): counts by type and order nature."""
+    if pdf.empty:
+        return
+    now = datetime.now().isoformat(timespec="seconds")
+    flags = pdf.assign(
+        has_end=pdf["end"].notna(),
+        # ISO strings compare correctly; ended = end already in the past at run time.
+        ended=pdf["end"].fillna("9999").lt(now),
+        geometries_n=pdf["geometries"].map(len))
+    flags.groupby(["regulation_type", "nature", "has_vehicle_condition"]).agg(
+        provisions=("provision_ref", "count"), dtros=("dtro_id", "nunique"),
+        with_end=("has_end", "sum"), ended=("ended", "sum"),
+        recurring=("has_recurring_period", "sum"), access_exempt=("has_access_condition", "sum"),
+        no_geometry=("geometries_n", lambda n: int((n == 0).sum())),
+    ).reset_index().to_csv(OUT / "prohibition_counts.csv", index=False)
+    prohibition_area_counts(pdf).to_csv(OUT / "prohibition_counts_by_area.csv", index=False)
+    print(f"prohibition provisions: {len(pdf)}")
+
+
 def main():
     client = from_env()
     if client is None:
@@ -122,9 +173,14 @@ def main():
     last_modified = None
     if "--cached" in sys.argv and RAW.exists():
         print("using cached", RAW)
+        # Keep the dump date recorded when the cached file was downloaded.
+        if (OUT / "volume.csv").exists():
+            prev = pd.read_csv(OUT / "volume.csv").get("dump_last_modified")
+            if prev is not None and prev.notna().any():
+                last_modified = prev.dropna().iloc[0]
     else:
         last_modified = download_all(client)
-    n_records, provs, restrs = 0, [], []
+    n_records, provs, restrs, prohibs = 0, [], [], []
     versions, updated = collections.Counter(), []
     for rec in records():
         n_records += 1
@@ -132,15 +188,19 @@ def main():
         updated.append(_ts(rec["lastUpdated"]))
         provs += speed_provisions(rec)
         restrs += restriction_provisions(rec)
+        prohibs += prohibition_provisions(rec)
     df = pd.DataFrame(provs)
     rdf = pd.DataFrame(restrs)
+    pdf = pd.DataFrame(prohibs)
     updated = [u for u in updated if u]
-    print(f"{n_records} D-TRO records, {len(df)} speed provisions, {len(rdf)} restriction provisions")
+    print(f"{n_records} D-TRO records, {len(df)} speed provisions, {len(rdf)} restriction provisions, "
+          f"{len(pdf)} prohibition provisions")
     pd.Series(versions, name="records").rename_axis("schema_version").sort_index() \
         .to_csv(OUT / "schema_versions.csv")
     pd.DataFrame([{"records": n_records, "speed_provisions": len(df),
                    "speed_dtros": df["dtro_id"].nunique() if not df.empty else 0,
                    "restriction_provisions": len(rdf),
+                   "prohibition_provisions": len(pdf),
                    "raw_bytes": RAW.stat().st_size, "dump_last_modified": last_modified,
                    "min_last_updated": min(updated, default=None),
                    "max_last_updated": max(updated, default=None)}]) \
@@ -157,6 +217,7 @@ def main():
             min_length_m=("length_m", "min"), min_weight_t=("weight_t", "min"),
         ).to_csv(OUT / "restriction_counts.csv")
         print(f"restriction provisions: {len(rdf)}")
+    write_prohibitions(pdf)
     if df.empty:
         return
     df.drop(columns="geometries").to_csv(OUT / "speed_provisions.csv", index=False)

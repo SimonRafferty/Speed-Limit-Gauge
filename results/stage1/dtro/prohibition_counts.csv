@@ -1,0 +1,11 @@
+regulation_type,nature,has_vehicle_condition,provisions,dtros,with_end,ended,recurring,access_exempt,no_geometry
+bannedMovementNoEntry,permanent,True,1,1,0,0,0,0,0
+bannedMovementNoEntry,temporary,False,7,7,7,7,7,0,0
+miscPROWClosure,temporary,False,10,10,10,8,9,0,0
+miscRoadClosure,temporary,False,147416,123235,147416,134465,20914,0,0
+miscRoadClosure,unknown,False,267,267,267,267,21,0,0
+movementOrderProhibitedAccess,experimental,True,1,1,1,0,0,0,0
+movementOrderProhibitedAccess,permanent,False,551,159,13,9,430,20,0
+movementOrderProhibitedAccess,permanent,True,2060,47,42,42,27,1505,0
+movementOrderProhibitedAccess,temporary,False,16,16,16,15,0,0,0
+publicRightOfWayClosure,temporary,False,10,10,10,6,6,0,0

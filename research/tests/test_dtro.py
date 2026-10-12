@@ -1,3 +1,5 @@
+import pytest
+
 from slg.dtro import DtroClient, speed_provisions
 
 RECORD_V5 = {
@@ -166,3 +168,76 @@ def test_restriction_provisions_dump_shape():
          "regulatedPlace": []}]}}}
     out = restriction_provisions(rec)
     assert len(out) == 1 and out[0]["width_m"] == 2 and out[0]["height_m"] is None
+
+
+from slg.dtro import PROHIBITION_TYPES, order_nature, prohibition_provisions
+
+RECORD_PROHIBIT = {
+    "id": "p1", "schemaVersion": "3.5.1",
+    "data": {"source": {"provision": [
+        # Temporary full road closure (dump shape: generalRegulation, single-object regulation).
+        {"reference": "C1", "orderReportingPoint": "ttroTtmoByNotice", "regulation": {
+            "isDynamic": True,
+            "generalRegulation": {"regulationType": "miscRoadClosure"},
+            "condition": [{"timeValidity": {
+                "start": "2026-06-23T09:48:11", "end": "2026-06-25T18:00:00",
+                "validPeriod": [{"startOfPeriod": "2026-06-23T09:48:11"}]}}]},
+         "regulatedPlace": [{"linearGeometry": {"linestring": "SRID=27700;LINESTRING(1 1, 2 2)"}}]},
+        # Permanent weight-class ban except for access: a vehicle-class ban, not a closure.
+        {"reference": "A1", "orderReportingPoint": "permanentNoticeOfMaking", "regulation": [{
+            "isDynamic": False,
+            "generalRegulation": {"regulationType": "movementOrderProhibitedAccess"},
+            "conditionSet": [{"operator": "and", "conditions": [
+                {"timeValidity": {"start": "2016-02-29T00:00:00"}},
+                {"vehicleCharacteristics": {"maximumGrossWeightCharacteristic": {
+                    "grossVehicleWeight": 3.5}}},
+                {"accessCondition": {"accessConditionType": ["accessOnly"]}}]}]}],
+         "regulatedPlace": []},
+        # v5 shape, seasonal motor-vehicle ban with a recurring period.
+        {"reference": "M1", "orderReportingPoint": "permanentAmendment", "regulation": [{
+            "regulationType": "motorVehiclesProhibited",
+            "condition": [{"timeValidity": {"start": "2020-10-01T00:00:00", "validPeriod": [
+                {"recurringDayWeekMonthPeriod": [{"applicableMonth": ["october"]}]}]}}]}],
+         "regulatedPlace": []},
+        # Not a prohibition.
+        {"reference": "K1", "regulation": [{"generalRegulation": {"regulationType": "kerbsideNoWaiting"}}],
+         "regulatedPlace": []},
+    ]}},
+}
+
+
+def test_prohibition_types():
+    for t in ("motorVehiclesProhibited", "movementOrderProhibitedAccess", "miscRoadClosure",
+              "miscPROWClosure", "bannedMovementNoEntry"):
+        assert t in PROHIBITION_TYPES
+    assert "kerbsideNoWaiting" not in PROHIBITION_TYPES
+
+
+def test_prohibition_provisions():
+    out = prohibition_provisions(RECORD_PROHIBIT)
+    assert [p["provision_ref"] for p in out] == ["C1", "A1", "M1"]
+    c, a, m = out
+    assert c["dtro_id"] == "p1" and c["regulation_type"] == "miscRoadClosure"
+    assert c["nature"] == "temporary" and c["is_dynamic"] is True
+    assert c["start"] == "2026-06-23T09:48:11" and c["end"] == "2026-06-25T18:00:00"
+    assert c["has_vehicle_condition"] is False and c["has_access_condition"] is False
+    assert c["has_recurring_period"] is False
+    assert c["geometries"] == ["SRID=27700;LINESTRING(1 1, 2 2)"]
+    assert a["regulation_type"] == "movementOrderProhibitedAccess"
+    assert a["nature"] == "permanent" and a["start"] == "2016-02-29T00:00:00" and a["end"] is None
+    assert a["has_vehicle_condition"] is True and a["has_access_condition"] is True
+    assert m["regulation_type"] == "motorVehiclesProhibited" and m["has_recurring_period"] is True
+    assert m["nature"] == "permanent"
+
+
+@pytest.mark.parametrize("orp, dynamic, expected", [
+    ("ttroTtmoByNotice", False, "temporary"), ("ttroTtmoNoticeOfIntention", False, "temporary"),
+    ("specialEventOrderNoticeOfMaking", False, "temporary"),
+    ("experimentalNoticeOfMaking", False, "experimental"),
+    ("experimentalMakingPermanent", False, "permanent"),
+    ("permanentNoticeOfMaking", False, "permanent"), ("permanentAmendment", False, "permanent"),
+    ("troOnRoadActiveStatus", False, "unknown"), (None, False, "unknown"),
+    (None, True, "temporary"),
+])
+def test_order_nature(orp, dynamic, expected):
+    assert order_nature({"orderReportingPoint": orp}, {"isDynamic": dynamic}) == expected
