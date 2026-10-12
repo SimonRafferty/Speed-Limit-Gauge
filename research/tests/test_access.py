@@ -59,9 +59,11 @@ def test_conditional(tags, expected):
 
 @pytest.mark.parametrize("tags, expected", [
     # Rights of way that exclude motor vehicles.
-    ({"designation": "restricted_byway"}, "prohibited"),
-    ({"designation": "public_bridleway"}, "prohibited"),
-    ({"designation": "public_footpath"}, "prohibited"),
+    # Designation alone: often a private drive / estate road driven with lawful authority
+    # (spec 7.1a, user decision 2026-10-12) -> yellow X, never red.
+    ({"designation": "restricted_byway"}, "permission"),
+    ({"designation": "public_bridleway"}, "permission"),
+    ({"designation": "public_footpath"}, "permission"),
     # Any explicit value on the four keys decides over the designation (spec 7.1a:
     # a public footpath over a private track is legal for those with permission).
     ({"designation": "public_footpath", "access": "private"}, "permission"),
@@ -73,8 +75,8 @@ def test_conditional(tags, expected):
     ({"designation": "restricted_byway", "motorcar": "destination"}, "permission"),
     ({"designation": "public_bridleway", "motor_vehicle": "no"}, "prohibited"),
     ({"designation": "public_footpath", "access": "private", "motor_vehicle": "no"}, "prohibited"),
-    # An unrecognised value does not override the designation.
-    ({"designation": "public_footpath", "access": "unknown"}, "prohibited"),
+    # An unrecognised value does not override the designation (still designation-only).
+    ({"designation": "public_footpath", "access": "unknown"}, "permission"),
     # Byway open to all traffic.
     ({"designation": "byway_open_to_all_traffic"}, "allowed"),
     ({"designation": "byway_open_to_all_traffic", "motor_vehicle": "no"}, "prohibited"),
@@ -93,3 +95,25 @@ def test_missing_values_from_pandas_are_ignored():
     tags = {"access": None, "motor_vehicle": math.nan, "motorcar": "", "vehicle": "no",
             "motor_vehicle:conditional": None, "designation": math.nan}
     assert motor_legality(tags) == "prohibited"
+
+
+@pytest.mark.parametrize("tags, expected", [
+    ({"access": "agricultural;forestry"}, "permission"),
+    ({"access": "private; destination"}, "permission"),
+    ({"motor_vehicle": "yes;permissive"}, "allowed"),
+    ({"access": "no;no"}, "prohibited"),
+    # Mixed or unrecognised parts are ambiguous.
+    ({"access": "private;yes"}, "unknown"),
+    ({"access": "no;private"}, "unknown"),
+    ({"access": "agricultural;bus"}, "unknown"),
+    # A mixed list does not override a designation either.
+    ({"designation": "public_footpath", "access": "private;yes"}, "permission"),
+])
+def test_semicolon_lists(tags, expected):
+    assert motor_legality(tags) == expected
+
+
+def test_goods_and_hgv_ignored_for_a_private_car():
+    # Legality is computed for a private car; goods/hgv bans are Commercial-mode (Stage 4).
+    assert motor_legality({"goods": "no", "hgv": "no"}) == "unknown"
+    assert motor_legality({"hgv": "no", "motor_vehicle": "yes"}) == "allowed"

@@ -30,6 +30,7 @@ TAG_KEYS = (
     "access", "motor_vehicle", "motorcar", "vehicle",
     "motor_vehicle:conditional", "motorcar:conditional", "vehicle:conditional",
     "access:conditional", "designation", "prow_ref", "tracktype", "surface",
+    "service",  # driveway / parking_aisle / alley ... (sizes yellow-X on service roads)
 )
 
 RESTRICTION_KEYS = ("maxheight", "maxheight:physical", "maxwidth", "maxwidth:physical",

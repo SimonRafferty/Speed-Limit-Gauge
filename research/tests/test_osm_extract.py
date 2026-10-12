@@ -182,3 +182,28 @@ def test_ways_in_area_includes_tracks_and_access_tags(tmp_path):
         assert r[k] == "yes"
     for k in ("motorcar:conditional", "vehicle:conditional", "access:conditional"):
         assert k in r and r[k] is None
+
+
+def test_tag_keys_include_service_goods_hgv():
+    from slg.osm_extract import TAG_KEYS
+    for k in ("service", "goods", "hgv"):
+        assert k in TAG_KEYS
+
+
+SERVICE_XML = """<?xml version='1.0' encoding='UTF-8'?>
+<osm version="0.6" generator="test">
+ <node id="1" version="1" timestamp="2024-01-01T00:00:00Z" lat="51.000" lon="-0.300"/>
+ <node id="2" version="1" timestamp="2024-01-01T00:00:00Z" lat="51.001" lon="-0.300"/>
+ <way id="40" version="1" timestamp="2025-06-01T12:00:00Z">
+  <nd ref="1"/><nd ref="2"/><tag k="highway" v="service"/><tag k="service" v="driveway"/>
+  <tag k="access" v="private"/>
+ </way>
+</osm>
+"""
+
+
+def test_ways_in_area_reads_service_subtag(tmp_path):
+    f = tmp_path / "s.osm"
+    f.write_text(SERVICE_XML, encoding="utf-8")
+    (r,) = ways_in_area(f, AREA)
+    assert r["service"] == "driveway" and r["access"] == "private"

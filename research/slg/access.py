@@ -1,13 +1,19 @@
 """Classify a way's legality for motor vehicles from its OSM access tags (spec 7.1a).
 
 Result is one of:
-  prohibited  - a definite "no" for motor vehicles (red X)
-  permission  - legal only with permission: private, destination ("except for access")... (yellow X)
+  prohibited  - an explicit "no" for motor vehicles on the deciding key (red X)
+  permission  - legal only with permission: private, destination ("except for access")...,
+                or a footpath/bridleway/restricted-byway designation with no access value
+                (often a private drive or estate road driven with lawful authority) (yellow X)
   conditional - a time/condition rule (`*:conditional`) decides; needs evaluating at drive time
   allowed     - lawful for anyone (yes / designated / permissive)
   unknown     - nothing relevant (an ordinary public road) or an ambiguous value
 
-Deliberately simple: semicolon lists, transport-mode hierarchies beyond the four keys and
+Legality is computed for a PRIVATE CAR. `goods`/`hgv` (and `maxweight:goods` etc.) are not
+consulted: Commercial-mode handling, where a van is `goods` and those keys take precedence
+over `motor_vehicle`, is Stage 4 work.
+
+Deliberately simple: a semicolon list counts only when every part falls in the same class;
 direction-specific keys (`:forward`/`:backward`) are not interpreted.
 """
 
@@ -22,7 +28,9 @@ PERMISSION_VALUES = frozenset({
 # Lawful for anyone (no X). "discouraged" is legal, merely advised against.
 ALLOWED_VALUES = frozenset({"yes", "designated", "permissive", "discouraged"})
 
-# Public rights of way that give no motor-vehicle right.
+# Public rights of way that give no public motor-vehicle right. Alone, they mean
+# "permission" (yellow X), not "prohibited": the landowner and those with lawful
+# authority may still drive them.
 NO_MOTOR_DESIGNATIONS = frozenset({"restricted_byway", "public_bridleway", "public_footpath"})
 ALL_TRAFFIC_DESIGNATIONS = frozenset({"byway_open_to_all_traffic"})
 
@@ -37,6 +45,10 @@ def _value(tags: dict, key: str) -> str | None:
 
 
 def _classify(value: str) -> str:
+    """Class of one value; a semicolon list only when all its parts agree."""
+    if ";" in value:
+        classes = {_classify(part.strip()) for part in value.split(";") if part.strip()}
+        return classes.pop() if len(classes) == 1 else "unknown"
     if value in PROHIBITED_VALUES:
         return "prohibited"
     if value in PERMISSION_VALUES:
@@ -65,7 +77,7 @@ def motor_legality(tags: dict) -> str:
 
     designation = _value(tags, "designation")
     if designation in NO_MOTOR_DESIGNATIONS:
-        return "prohibited"
+        return "permission"
     if deciding is None and designation in ALL_TRAFFIC_DESIGNATIONS:
         return "allowed"
     return "unknown"

@@ -1,4 +1,4 @@
-"""Stage 1: tracks and motor-vehicle legality (red X) per test area (spec 7.1a).
+"""Stage 1: tracks and motor-vehicle legality (red X / yellow X) per test area (spec 7.1a).
 
 Run (after osm_coverage.py has cached the ways):
     .venv/Scripts/python research/stage1/osm_access.py
@@ -18,6 +18,19 @@ LEGALITY = ("prohibited", "permission", "conditional", "allowed", "unknown")
 CONDITIONAL_KEYS = tuple(k + ":conditional" for k in KEYS)
 
 
+def permission_breakdown(df: pd.DataFrame, area: str) -> pd.DataFrame:
+    """km of permission-only (yellow X) road by highway class and service=* value, split by
+    whether an access tag or only a rights-of-way designation put it there."""
+    perm = df[df["legality"] == "permission"]
+    has_key = perm[list(KEYS)].notna().any(axis=1)
+    g = (perm.assign(km=perm["length_m"] / 1000, service=perm["service"].fillna("(none)"),
+                     basis=has_key.map({True: "access_tag", False: "designation_only"}))
+             .groupby(["highway", "service", "basis"])
+             .agg(ways=("way_id", "count"), km=("km", "sum")).reset_index())
+    g.insert(0, "area", area)
+    return g
+
+
 def grouped(df: pd.DataFrame, area: str, col: str) -> pd.DataFrame:
     """ways and km per value of `col`, for tracks and for all classes."""
     parts = []
@@ -32,7 +45,7 @@ def grouped(df: pd.DataFrame, area: str, col: str) -> pd.DataFrame:
 
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
-    summary, legality, designation, frames = [], [], [], []
+    summary, legality, designation, permission, frames = [], [], [], [], []
     for area in AREAS:
         cache = DATA / "stage1" / f"{area.name}_ways.parquet"
         if not cache.exists():
@@ -57,12 +70,15 @@ def main():
         summary.append(row)
         legality.append(grouped(df, area.name, "legality"))
         designation.append(grouped(df, area.name, "designation"))
+        permission.append(permission_breakdown(df, area.name))
         print({k: row[k] for k in ("area", "track_km", "track_pct_km_usable",
                                    "track_prohibited_km", "track_permission_km")})
 
     pd.DataFrame(summary).to_csv(OUT / "access_by_area.csv", index=False)
     pd.concat(legality, ignore_index=True).round({"km": 2}).to_csv(OUT / "legality_by_area.csv", index=False)
     pd.concat(designation, ignore_index=True).round({"km": 2}).to_csv(OUT / "designation_by_area.csv", index=False)
+    (pd.concat(permission, ignore_index=True).sort_values(["area", "km"], ascending=[True, False])
+       .round({"km": 2}).to_csv(OUT / "permission_by_class_service.csv", index=False))
 
     # Every distinct :conditional value, to size the time-rule parser needed later.
     uniq = pd.concat(frames, ignore_index=True).drop_duplicates("way_id")
