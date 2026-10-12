@@ -1,7 +1,7 @@
 import pytest
 
 from slg.areas import Area
-from slg.osm_extract import download_extract, ways_in_area
+from slg.osm_extract import download_extract, restriction_nodes_in_area, ways_in_area
 
 OSM_XML = """<?xml version='1.0' encoding='UTF-8'?>
 <osm version="0.6" generator="test">
@@ -69,3 +69,27 @@ def test_download_extract_writes_once(tmp_path):
     assert p.read_bytes() == b"abcd"
     download_extract("england/west-sussex", dest_dir=tmp_path, session=s)
     assert s.calls == 1
+
+
+NODES_XML = """<?xml version='1.0' encoding='UTF-8'?>
+<osm version="0.6" generator="test">
+ <node id="1" version="1" timestamp="2024-01-01T00:00:00Z" lat="51.000" lon="-0.300">
+  <tag k="barrier" v="height_restrictor"/><tag k="maxheight" v="2.0"/>
+ </node>
+ <node id="2" version="1" timestamp="2024-01-01T00:00:00Z" lat="52.000" lon="-0.300">
+  <tag k="maxheight" v="2.0"/>
+ </node>
+ <node id="3" version="1" timestamp="2024-01-01T00:00:00Z" lat="51.001" lon="-0.300">
+  <tag k="barrier" v="gate"/>
+ </node>
+</osm>
+"""
+
+
+def test_restriction_nodes_in_area(tmp_path):
+    f = tmp_path / "n.osm"
+    f.write_text(NODES_XML, encoding="utf-8")
+    rows = restriction_nodes_in_area(f, AREA)
+    assert [r["node_id"] for r in rows] == [1]
+    assert rows[0]["barrier"] == "height_restrictor" and rows[0]["maxheight"] == "2.0"
+    assert rows[0]["lon"] == pytest.approx(-0.3) and rows[0]["area"] == "t"

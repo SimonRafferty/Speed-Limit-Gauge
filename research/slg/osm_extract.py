@@ -21,7 +21,13 @@ TAG_KEYS = (
     "highway", "maxspeed", "maxspeed:forward", "maxspeed:backward", "maxspeed:type",
     "maxspeed:conditional", "maxspeed:variable", "source:maxspeed", "zone:maxspeed",
     "lit", "oneway", "lanes", "dual_carriageway", "junction", "name", "ref",
+    "maxheight", "maxheight:physical", "maxwidth", "maxwidth:physical",
+    "maxweight", "maxweightrating", "maxweight:hgv", "maxweight:goods",
+    "hgv", "goods", "bridge", "tunnel", "covered",
 )
+
+RESTRICTION_KEYS = ("maxheight", "maxheight:physical", "maxwidth", "maxwidth:physical",
+                    "maxweight", "maxweightrating", "maxweight:hgv")
 
 
 def download_extract(region: str, dest_dir: Path = DATA / "osm", session=requests) -> Path:
@@ -68,5 +74,22 @@ def ways_in_area(pbf: Path, area: Area) -> list[dict]:
         }
         for k in TAG_KEYS:
             row[k] = obj.tags.get(k)
+        rows.append(row)
+    return rows
+
+
+def restriction_nodes_in_area(pbf: Path, area: Area) -> list[dict]:
+    """Nodes carrying a height/width/weight restriction inside the area bbox (e.g. car-park barriers)."""
+    fp = (osmium.FileProcessor(str(pbf))
+          .with_filter(osmium.filter.EntityFilter(osmium.osm.NODE))
+          .with_filter(osmium.filter.KeyFilter(*RESTRICTION_KEYS)))
+    rows = []
+    for n in fp:
+        if not n.location.valid() or not area.contains(n.location.lon, n.location.lat):
+            continue
+        row = {"node_id": n.id, "area": area.name, "country": area.country,
+               "lon": n.location.lon, "lat": n.location.lat, "barrier": n.tags.get("barrier")}
+        for k in RESTRICTION_KEYS:
+            row[k] = n.tags.get(k)
         rows.append(row)
     return rows
