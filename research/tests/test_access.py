@@ -14,17 +14,21 @@ from slg.access import motor_legality
     ({"vehicle": "no"}, "prohibited"),
     ({"motor_vehicle": "no"}, "prohibited"),
     ({"motorcar": "no"}, "prohibited"),
-    # Lawful with permission: never a red X.
-    *[({"access": v}, "allowed") for v in (
-        "private", "destination", "permissive", "customers", "delivery", "agricultural",
-        "forestry", "discouraged", "yes", "designated", "permit")],
-    ({"motor_vehicle": "private"}, "allowed"),
+    # Legal only with permission: yellow X.
+    *[({"access": v}, "permission") for v in (
+        "private", "permit", "destination", "customers", "delivery", "agricultural", "forestry")],
+    ({"motor_vehicle": "private"}, "permission"),
+    ({"motorcar": "destination"}, "permission"),
+    # Allowed outright: no X.
+    *[({"access": v}, "allowed") for v in ("yes", "designated", "permissive", "discouraged")],
     # Most specific key wins.
     ({"access": "no", "motor_vehicle": "yes"}, "allowed"),
     ({"access": "yes", "motor_vehicle": "no"}, "prohibited"),
     ({"motor_vehicle": "no", "motorcar": "yes"}, "allowed"),
     ({"motor_vehicle": "yes", "motorcar": "no"}, "prohibited"),
-    ({"vehicle": "no", "motor_vehicle": "destination"}, "allowed"),
+    ({"vehicle": "no", "motor_vehicle": "destination"}, "permission"),
+    ({"access": "private", "motor_vehicle": "yes"}, "allowed"),
+    ({"access": "yes", "motorcar": "private"}, "permission"),
     ({"access": "private", "vehicle": "no"}, "prohibited"),
     # Case and whitespace are tolerated.
     ({"motor_vehicle": " No "}, "prohibited"),
@@ -58,18 +62,24 @@ def test_conditional(tags, expected):
     ({"designation": "restricted_byway"}, "prohibited"),
     ({"designation": "public_bridleway"}, "prohibited"),
     ({"designation": "public_footpath"}, "prohibited"),
-    # Generic access / vehicle values are not a motor permission.
-    ({"designation": "public_footpath", "access": "yes"}, "prohibited"),
-    ({"designation": "restricted_byway", "vehicle": "yes"}, "prohibited"),
-    ({"designation": "public_bridleway", "access": "private"}, "prohibited"),
-    # An explicit motor permission overrides the designation.
-    ({"designation": "public_footpath", "motor_vehicle": "private"}, "allowed"),
-    ({"designation": "restricted_byway", "motorcar": "destination"}, "allowed"),
+    # Any explicit value on the four keys decides over the designation (spec 7.1a:
+    # a public footpath over a private track is legal for those with permission).
+    ({"designation": "public_footpath", "access": "private"}, "permission"),
+    ({"designation": "public_bridleway", "access": "private"}, "permission"),
+    ({"designation": "public_footpath", "access": "yes"}, "allowed"),
+    ({"designation": "restricted_byway", "vehicle": "yes"}, "allowed"),
+    ({"designation": "public_footpath", "access": "permissive"}, "allowed"),
+    ({"designation": "public_footpath", "motor_vehicle": "private"}, "permission"),
+    ({"designation": "restricted_byway", "motorcar": "destination"}, "permission"),
     ({"designation": "public_bridleway", "motor_vehicle": "no"}, "prohibited"),
+    ({"designation": "public_footpath", "access": "private", "motor_vehicle": "no"}, "prohibited"),
+    # An unrecognised value does not override the designation.
+    ({"designation": "public_footpath", "access": "unknown"}, "prohibited"),
     # Byway open to all traffic.
     ({"designation": "byway_open_to_all_traffic"}, "allowed"),
     ({"designation": "byway_open_to_all_traffic", "motor_vehicle": "no"}, "prohibited"),
     ({"designation": "byway_open_to_all_traffic", "access": "no"}, "prohibited"),
+    ({"designation": "byway_open_to_all_traffic", "access": "private"}, "permission"),
     ({"designation": "byway_open_to_all_traffic",
       "motor_vehicle:conditional": "no @ (Oct-Apr)"}, "conditional"),
     # Other designations say nothing about motor vehicles.
