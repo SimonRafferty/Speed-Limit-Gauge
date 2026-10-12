@@ -181,7 +181,9 @@ The gauge warns when the road ahead has a height, width or weight restriction th
 - **Red X — not legal to drive here now:** when the matched way is legally closed to motor vehicles at the current date/time, the dial shows a large red X (same footprint as the numeral) in place of the limit. Sources:
   - D-TRO orders: `motorVehiclesProhibited`, `movementOrderProhibitedAccess`, `miscRoadClosure`, `miscPROWClosure`, honouring their time validity (seasonal and temporary orders, evaluated against GPS date/time). `bannedMovementNoEntry` applies in its direction only.
   - OSM: `motor_vehicle`/`motorcar`/`vehicle`/`access` = `no` and their `:conditional` forms (evaluated now, e.g. seasonal green-lane TROs `motor_vehicle:conditional=no @ (Oct-Apr)`); rights-of-way designations that exclude motor vehicles (`restricted_byway`, `public_bridleway`, `public_footpath`).
-  - Not a red X: `access=private` / `destination` / `permissive` (lawful with permission), and anything ambiguous or unparseable.
+  - Not a red X: anything ambiguous or unparseable, and the permission-only cases below.
+- **JCB-yellow X — legal only with permission (user decision 2026-10-12):** same footprint, shown when the most specific motor access key (`motorcar` > `motor_vehicle` > `vehicle` > `access`) is `private`, `permit`, `destination` ("except for access"), `customers`, `delivery`, `agricultural` or `forestry`, including a public footpath/bridleway/restricted byway over a private track tagged e.g. `access=private` (lawful for the owner and those with permission). `permissive` and `yes` show no X.
+- Precedence: red X > yellow X > speed numeral; overspeed yellow background still applies to the numeral only.
 - Same certainty rule as restrictions: only a definite, currently-in-force prohibition on the confidently matched way shows the red X.
 - Applies to any matched way, not only tracks (road closures, timed bus gates, school streets).
 
