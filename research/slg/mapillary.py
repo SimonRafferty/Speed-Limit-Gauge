@@ -36,28 +36,63 @@ def token() -> str | None:
     return os.getenv("MAPILLARY_TOKEN")
 
 
+SPEED_VALUES = ",".join(
+    f"regulatory--maximum-speed-limit-{n}--g1"
+    for n in (5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70))
+LIMIT = 2000
+MAX_DEPTH = 3
+
+
+def _split(cell):
+    w, s, e, n = cell
+    mx, my = round((w + e) / 2, 6), round((s + n) / 2, 6)
+    return [(w, s, mx, my), (mx, s, e, my), (w, my, mx, n), (mx, my, e, n)]
+
+
 def fetch_features(bbox, access_token: str, session=requests,
-                   pause: float = 0.2) -> tuple[list[dict], int]:
+                   pause: float = 0.2) -> tuple[list[dict], int, int]:
     """Speed-related map features in bbox, fetched in 0.05 degree cells.
 
-    Returns (features, failed_cells). A cell whose request errors (HTTP error,
-    timeout, bad JSON) is counted and skipped rather than aborting the pull, so
-    callers must report failed_cells: the result is incomplete when it is > 0.
+    Returns (features, failed_cells, truncated_cells).
+    - The request filters speed-limit sign classes server-side (object_values; only
+      the common --g1 variants), and "speed" in object_value is still checked
+      client-side as a fallback.
+    - The API returns at most LIMIT features per request, so a cell that returns
+      exactly LIMIT is split into 4 and re-queried, up to MAX_DEPTH levels. A cell
+      still full at the deepest level is counted in truncated_cells (some signs
+      are then missing).
+    - A request that errors (HTTP error, timeout, bad JSON) is counted in
+      failed_cells and skipped rather than aborting the pull; the result is then
+      incomplete. Features are de-duplicated by id across overlapping sub-cells.
     """
-    feats, failed = [], 0
-    for cell in chunk_bbox(bbox):
+    feats: dict[str, dict] = {}
+    stats = {"failed": 0, "truncated": 0}
+
+    def query(cell, depth):
         try:
             r = session.get(ENDPOINT, timeout=60, params={
                 "access_token": access_token,
                 "fields": "id,object_value,geometry,first_seen_at,last_seen_at",
                 "bbox": ",".join(str(v) for v in cell),
-                "limit": 2000,
+                "object_values": SPEED_VALUES,
+                "limit": LIMIT,
             })
             r.raise_for_status()
             data = r.json().get("data", [])
         except (requests.RequestException, ValueError):
-            failed += 1
-            continue
-        feats += [f for f in data if "speed" in f.get("object_value", "")]
+            stats["failed"] += 1
+            return
         time.sleep(pause)
-    return feats, failed
+        if len(data) >= LIMIT:
+            if depth < MAX_DEPTH:
+                for sub in _split(cell):
+                    query(sub, depth + 1)
+                return
+            stats["truncated"] += 1
+        for f in data:
+            if "speed" in f.get("object_value", ""):
+                feats[f["id"]] = f
+
+    for cell in chunk_bbox(bbox):
+        query(cell, 0)
+    return list(feats.values()), stats["failed"], stats["truncated"]

@@ -43,7 +43,41 @@ class _Session:
 
 
 def test_fetch_features_survives_failed_cell():
-    feats, failed = fetch_features((-0.37, 51.04, -0.29, 51.09), "tok",
+    feats, failed, truncated = fetch_features((-0.37, 51.04, -0.29, 51.09), "tok",
                                    session=_Session(), pause=0)
-    assert failed == 1
+    assert failed == 1 and truncated == 0
     assert [f["id"] for f in feats] == ["1"]
+
+
+class _DenseSession:
+    """Whole 0.05 cell returns a full page; any sub-cell returns one distinct feature."""
+    def __init__(self, always_full=False):
+        self.calls, self.always_full = [], always_full
+
+    def get(self, url, params=None, **k):
+        self.calls.append(params)
+        if self.always_full or len(self.calls) == 1:
+            return _Resp([{"id": f"{len(self.calls)}-{i}", "object_value": "x--speed"}
+                          for i in range(2000)])
+        return _Resp([{"id": f"s{len(self.calls)}", "object_value": "regulatory--maximum-speed-limit-30--g1"}])
+
+
+def test_server_side_filter_param():
+    s = _DenseSession()
+    fetch_features((-0.37, 51.04, -0.32, 51.09), "tok", session=s, pause=0)
+    assert "regulatory--maximum-speed-limit-30--g1" in s.calls[0]["object_values"]
+
+
+def test_full_cell_is_split_into_four():
+    s = _DenseSession()
+    feats, failed, truncated = fetch_features((-0.37, 51.04, -0.32, 51.09), "tok",
+                                              session=s, pause=0)
+    assert len(s.calls) == 5 and truncated == 0 and failed == 0
+    assert len(feats) == 4  # the full parent page is discarded in favour of sub-cells
+
+
+def test_split_depth_limited_and_truncation_counted():
+    s = _DenseSession(always_full=True)
+    feats, failed, truncated = fetch_features((-0.37, 51.04, -0.32, 51.09), "tok",
+                                              session=s, pause=0)
+    assert len(s.calls) == 1 + 4 + 16 + 64 and truncated == 64

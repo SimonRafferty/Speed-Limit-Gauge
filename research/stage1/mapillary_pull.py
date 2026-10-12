@@ -33,7 +33,7 @@ def main():
         cache = DATA / "stage1" / f"{area.name}_ways.parquet"
         if not cache.exists():
             continue
-        feats, failed_cells = fetch_features(area.bbox, tok)
+        feats, failed_cells, truncated_cells = fetch_features(area.bbox, tok)
         raw_counts += [{"area": area.name, "object_value": f["object_value"]} for f in feats]
         signs = [(f, sign_mph(f["object_value"])) for f in feats]
         signs = [(f, mph) for f, mph in signs if mph is not None]
@@ -54,6 +54,7 @@ def main():
                                       "dist_m": d, "feature_id": signs[si][0]["id"],
                                       "last_seen": signs[si][0].get("last_seen_at")})
         summary.append({"area": area.name, "failed_cells": failed_cells,
+                        "truncated_cells": truncated_cells,
                         "ways_excluded_service_track": int(excluded.sum()),
                         "speed_features": len(feats), "max_speed_signs": len(signs),
                         "snapped": len(pairs), **compare(rows)})
