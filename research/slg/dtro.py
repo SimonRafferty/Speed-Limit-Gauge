@@ -26,7 +26,7 @@ _RING = re.compile(r"\(([^()]*)\)")
 
 
 class DtroClient:
-    def __init__(self, client_id: str, client_secret: str, env: str = "integration", session=requests):
+    def __init__(self, client_id: str, client_secret: str, env: str = "production", session=requests):
         self.base = BASES[env]
         self._auth = (client_id, client_secret)
         self._session = session
@@ -63,7 +63,7 @@ def from_env(session=requests) -> DtroClient | None:
     cid, secret = os.getenv("DTRO_CLIENT_ID"), os.getenv("DTRO_CLIENT_SECRET")
     if not cid or not secret:
         return None
-    return DtroClient(cid, secret, os.getenv("DTRO_ENV", "integration"), session)
+    return DtroClient(cid, secret, os.getenv("DTRO_ENV", "production"), session)
 
 
 def _strings(obj):

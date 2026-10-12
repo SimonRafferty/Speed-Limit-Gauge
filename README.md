@@ -21,4 +21,7 @@ Research phase. Nothing is flashable yet.
 
 ## Data licences
 
-OpenStreetMap data © OpenStreetMap contributors, ODbL. D-TRO data under the Open Government Licence.
+- OpenStreetMap data © OpenStreetMap contributors, available under the Open Database Licence (ODbL). The OSM-derived CSVs under `results/` (including node ids, coordinates and raw tags in `results/stage1/restrictions/osm_restriction_nodes.csv`) are a derived database under the ODbL.
+- D-TRO data: contains public sector information licensed under the Open Government Licence v3.0 (Department for Transport).
+- Wales 30 mph roads layer: contains public sector information licensed under the Open Government Licence v3.0 — Welsh Government (DataMapWales); licence being confirmed with the publisher.
+- West Sussex public rights of way: contains public sector information licensed under the Open Government Licence v3.0 — West Sussex County Council, obtained via rowmaps.com.

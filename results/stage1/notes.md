@@ -1,5 +1,7 @@
 # Stage 1 notes: data sources for the speed-limit gauge
 
+**Data licences:** OSM-derived results © OpenStreetMap contributors (ODbL). D-TRO, DataMapWales (Welsh Government) and West Sussex County Council rights-of-way data (via rowmaps.com) contain public sector information licensed under the Open Government Licence v3.0.
+
 Written 2026-10-12 at the end of Stage 1. Every number below is copied or summed from a
 committed results file (path given with each table); nothing is estimated. "Test areas" are
 the 12 areas in spec §5. Per-area tables count a way in every area it falls in; country,
@@ -87,7 +89,7 @@ is a national limit (50 mph for those modes), not a posted 60. Stages 2 and 4 mu
 limits are rare (D-TRO has 6 permanent 60 mph provisions in all of England).
 
 **Odd values** are rare: 17 way rows out of 39,633 tagged rows (`osm/odd_values.csv`):
-`12 mph` ×5 (non-standard, London service roads) and bare numbers 5, 8, 15, 20, 30 (no unit;
+`12 mph` ×6 (non-standard, London service roads) and bare numbers 5, 8, 15, 20, 30 (no unit;
 km/h by OSM rule, mph by intent). They total 1.4 km "ambiguous" + 1.3 km "non-standard"
 (`osm/kind_km_by_class.csv`). The parser shows no limit for either.
 
