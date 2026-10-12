@@ -814,7 +814,7 @@ def main():
     coverage_by_class(ways, ("condition",)).to_csv(OUT / "coverage_by_condition.csv", index=False)
     kind_breakdown(ways).to_csv(OUT / "kind_km_by_class.csv")
     freshness(ways, now).to_csv(OUT / "freshness_by_class.csv", index=False)
-    (ways[ways["ms_kind"].isin(["ambiguous", "unparsed", "none", "multi"])]
+    (ways[ways["ms_kind"].isin(["ambiguous", "unparsed", "none", "multi", "nonstandard"])]
         [["way_id", "area", "highway", "maxspeed"]]
         .to_csv(OUT / "odd_values.csv", index=False))
     ways["maxspeed:type"].value_counts(dropna=False).to_csv(OUT / "maxspeed_type_counts.csv")
