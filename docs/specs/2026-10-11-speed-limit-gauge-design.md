@@ -110,6 +110,8 @@ Stage 2 uses OSM-tagged ways as truth. For user recordings, build a hand-checked
 
 Revised 2026-10-12 after the microSD slot was confirmed. The device is **offline-first**: it never needs a signal to work; connectivity is only used to receive updates.
 
+Card in use (checked 2026-10-12): 16 GB, FAT32 (MBR), 8 KB clusters — FAT32 is what the ESP32 FatFs handles natively, so keep it (no exFAT). Tiles are stored in a small number of large pack files with an index, not one file per tile: fewer directory/FAT updates per write (less to corrupt), no 8 KB-cluster slack per tile, faster open/seek on the ESP32.
+
 Storage: full-GB base tile set on microSD (expected 100–300 MB, to be measured; a high-endurance/industrial card is recommended for under-dash temperatures). 8 MB PSRAM holds the working set of tiles around the vehicle. Onboard flash holds firmware, NVS settings and the version manifest only.
 
 Tiles: fixed grid, cell size chosen in Stage 5 from measured bytes per tile and read latency from SD (expected 2–5 km). Delta-encoded integer geometry, simplified to a tolerance Stage 3 shows is harmless to matching. Each way has a stable id so patches can address it.
