@@ -123,3 +123,46 @@ def test_parse_ewkt_repairs_outer_ring_split_into_pieces():
     g, why = parse_ewkt("SRID=27700;POLYGON((0 0, 10 0, 10 10),(0 10, 0 0))")
     assert why == "repaired_split_ring"
     assert g.geom_type == "Polygon" and g.area == 100
+
+
+from slg.dtro import restriction_provisions
+
+RECORD_RESTRICT = {
+    "id": "r1", "schemaVersion": "5.0.0",
+    "data": {"source": {"provision": [
+        {"reference": "H1", "actionType": "new",
+         "regulation": [{"regulationType": "dimensionMaximumHeightStructural",
+                         "condition": [{"vehicleCharacteristics": {
+                             "maximumHeightCharacteristic": {"vehicleHeight": 2.1}}}]}],
+         "regulatedPlace": [{"linearGeometry": {"linestring": "SRID=27700;LINESTRING(1 1, 2 2)"}}]},
+        {"reference": "W1", "actionType": "new",
+         "regulation": [{"regulationType": "dimensionMaximumWeightStructural",
+                         "condition": [{"vehicleCharacteristics": {
+                             "maximumGrossWeightCharacteristic": {"grossVehicleWeight": 3.0,
+                                                                  "typeOfWeight": "maximum"}}}]}],
+         "regulatedPlace": []},
+        {"reference": "S1", "regulation": [{"regulationType": "speedLimitValueBased"}], "regulatedPlace": []},
+    ]}},
+}
+
+
+def test_restriction_provisions():
+    out = restriction_provisions(RECORD_RESTRICT)
+    assert [p["provision_ref"] for p in out] == ["H1", "W1"]
+    assert out[0]["height_m"] == 2.1 and out[0]["weight_t"] is None
+    assert out[0]["geometries"] == ["SRID=27700;LINESTRING(1 1, 2 2)"]
+    assert out[1]["weight_t"] == 3.0 and out[1]["type_of_weight"] == "maximum"
+
+
+def test_restriction_provisions_dump_shape():
+    # Production shape: pre-v5 generalRegulation, single-object regulation,
+    # values nested under conditionSet[].conditions[].
+    rec = {"id": "r2", "schemaVersion": "3.5.1", "data": {"source": {"provision": [
+        {"reference": "X1", "regulation": {
+            "generalRegulation": {"regulationType": "dimensionMaximumWidth"},
+            "conditionSet": [{"operator": "and", "conditions": [
+                {"timeValidity": {"start": "2016-02-29T00:00:00"}},
+                {"vehicleCharacteristics": {"maximumWidthCharacteristic": {"vehicleWidth": 2}}}]}]},
+         "regulatedPlace": []}]}}}
+    out = restriction_provisions(rec)
+    assert len(out) == 1 and out[0]["width_m"] == 2 and out[0]["height_m"] is None

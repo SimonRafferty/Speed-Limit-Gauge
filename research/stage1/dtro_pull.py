@@ -22,7 +22,7 @@ import shapely
 from slg.agreement import compare, snap_to_ways, to_bng
 from slg.areas import AREAS
 from slg.coverage import annotate
-from slg.dtro import from_env, parse_ewkt, speed_provisions
+from slg.dtro import from_env, parse_ewkt, restriction_provisions, speed_provisions
 from slg.paths import DATA, RESULTS
 
 OUT = RESULTS / "stage1" / "dtro"
@@ -124,24 +124,39 @@ def main():
         print("using cached", RAW)
     else:
         last_modified = download_all(client)
-    n_records, provs = 0, []
+    n_records, provs, restrs = 0, [], []
     versions, updated = collections.Counter(), []
     for rec in records():
         n_records += 1
         versions[rec["schemaVersion"]] += 1
         updated.append(_ts(rec["lastUpdated"]))
         provs += speed_provisions(rec)
+        restrs += restriction_provisions(rec)
     df = pd.DataFrame(provs)
+    rdf = pd.DataFrame(restrs)
     updated = [u for u in updated if u]
-    print(f"{n_records} D-TRO records, {len(df)} speed provisions")
+    print(f"{n_records} D-TRO records, {len(df)} speed provisions, {len(rdf)} restriction provisions")
     pd.Series(versions, name="records").rename_axis("schema_version").sort_index() \
         .to_csv(OUT / "schema_versions.csv")
     pd.DataFrame([{"records": n_records, "speed_provisions": len(df),
                    "speed_dtros": df["dtro_id"].nunique() if not df.empty else 0,
+                   "restriction_provisions": len(rdf),
                    "raw_bytes": RAW.stat().st_size, "dump_last_modified": last_modified,
                    "min_last_updated": min(updated, default=None),
                    "max_last_updated": max(updated, default=None)}]) \
         .to_csv(OUT / "volume.csv", index=False)
+    if not rdf.empty:
+        rdf.drop(columns="geometries").to_csv(OUT / "restriction_provisions.csv", index=False)
+        # Most dimension orders are temporary (isDynamic) street-works orders with no
+        # limit value at all, so count how many actually state one.
+        values = rdf[["height_m", "width_m", "length_m", "weight_t"]].notna().any(axis=1)
+        rdf.assign(has_value=values, dynamic=rdf["is_dynamic"].eq(True)).groupby("regulation_type").agg(
+            n=("provision_ref", "count"),
+            with_value=("has_value", "sum"), dynamic=("dynamic", "sum"),
+            min_height_m=("height_m", "min"), min_width_m=("width_m", "min"),
+            min_length_m=("length_m", "min"), min_weight_t=("weight_t", "min"),
+        ).to_csv(OUT / "restriction_counts.csv")
+        print(f"restriction provisions: {len(rdf)}")
     if df.empty:
         return
     df.drop(columns="geometries").to_csv(OUT / "speed_provisions.csv", index=False)

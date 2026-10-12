@@ -154,3 +154,49 @@ def parse_ewkt(ewkt: str):
                 # and distance queries do not need it.
                 return g, "repaired_split_ring"
     return None, "unparsable"
+
+
+RESTRICTION_TYPES = (
+    "dimensionMaximumHeightStructural", "dimensionMaximumHeightWithTRO",
+    "dimensionMaximumWidth", "dimensionMaximumLength",
+    "dimensionMaximumWeightEnvironmental", "dimensionMaximumWeightStructural",
+)
+_VALUE_KEYS = {"vehicleHeight": "height_m", "vehicleWidth": "width_m",
+               "vehicleLength": "length_m", "grossVehicleWeight": "weight_t",
+               "typeOfWeight": "type_of_weight"}
+
+
+def _first_values(obj, found=None) -> dict:
+    """First occurrence of each _VALUE_KEYS key anywhere in obj."""
+    found = {} if found is None else found
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k in _VALUE_KEYS and _VALUE_KEYS[k] not in found and not isinstance(v, (dict, list)):
+                found[_VALUE_KEYS[k]] = v
+            else:
+                _first_values(v, found)
+    elif isinstance(obj, list):
+        for v in obj:
+            _first_values(v, found)
+    return found
+
+
+def restriction_provisions(record: dict) -> list[dict]:
+    """One row per height/width/length/weight regulation in a D-TRO record."""
+    out = []
+    for prov, reg, rtype in _regulations(record):
+        if rtype not in RESTRICTION_TYPES:
+            continue
+        values = _first_values(reg)
+        out.append({
+            "dtro_id": record.get("id"),
+            "schema_version": record.get("schemaVersion"),
+            "provision_ref": prov.get("reference"),
+            "action": prov.get("actionType"),
+            "regulation_type": rtype,
+            **{col: values.get(col) for col in _VALUE_KEYS.values()},
+            "is_dynamic": reg.get("isDynamic"),
+            "geometries": [s for s in _strings(prov.get("regulatedPlace", []))
+                           if s.startswith("SRID=")],
+        })
+    return out

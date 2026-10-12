@@ -1,2 +1,2 @@
-records,speed_provisions,speed_dtros,raw_bytes,dump_last_modified,min_last_updated,max_last_updated
-146202,5229,3127,537483749,,2024-10-18 15:12:50,2026-09-05 23:50:11
+records,speed_provisions,speed_dtros,restriction_provisions,raw_bytes,dump_last_modified,min_last_updated,max_last_updated
+146202,5229,3127,355,537483749,"Sun, 06 Sep 2026 01:01:46 GMT",2024-10-18 15:12:50,2026-09-05 23:50:11
