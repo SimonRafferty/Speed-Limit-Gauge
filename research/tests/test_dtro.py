@@ -98,3 +98,28 @@ def test_speed_provisions_without_regulation_type_and_dict_regulation():
     assert [p["provision_ref"] for p in out] == ["T1"]
     assert out[0]["regulation_type"] == "speedLimitValueBased"
     assert out[0]["mph"] == 50 and out[0]["nature"] == "temporary"
+
+
+from slg.dtro import parse_ewkt
+
+
+def test_parse_ewkt_strips_srid_and_accepts_linear_kinds():
+    g, why = parse_ewkt("SRID=27700;LINESTRING(0 0, 10 0)")
+    assert why == "ok" and g.length == 10
+    g, why = parse_ewkt("SRID=27700;MULTILINESTRING((0 0, 1 0),(2 0, 3 0))")
+    assert why == "ok" and g.geom_type == "MultiLineString"
+    g, why = parse_ewkt("SRID=27700;POLYGON((0 0, 1 0, 1 1, 0 0))")
+    assert why == "ok" and g.area == 0.5
+
+
+def test_parse_ewkt_rejects_points_other_srids_and_garbage():
+    assert parse_ewkt("SRID=27700;POINT(1 1)") == (None, "kind_POINT")
+    assert parse_ewkt("SRID=4326;LINESTRING(0 0, 1 1)") == (None, "not_27700")
+    assert parse_ewkt("SRID=27700;LINESTRING(0 0, x)") == (None, "unparsable")
+
+
+def test_parse_ewkt_repairs_outer_ring_split_into_pieces():
+    # Seen in production: one ring published as several unclosed pieces.
+    g, why = parse_ewkt("SRID=27700;POLYGON((0 0, 10 0, 10 10),(0 10, 0 0))")
+    assert why == "repaired_split_ring"
+    assert g.geom_type == "Polygon" and g.area == 100

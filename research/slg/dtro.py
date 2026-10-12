@@ -1,8 +1,10 @@
 """DfT D-TRO consumer client (OAuth2 client credentials) and speed-limit parser."""
 import os
+import re
 import time
 
 import requests
+import shapely
 from dotenv import load_dotenv
 
 from slg.paths import ROOT
@@ -12,6 +14,9 @@ BASES = {
     "production": "https://dtro.dft.gov.uk/v1",
 }
 SPEED_TYPES = ("speedLimitValueBased", "speedLimitProfileBased")
+# Geometry kinds that can describe a stretch of road; points (allowed pre-v5) cannot.
+LINEAR_KINDS = ("LINESTRING", "MULTILINESTRING", "POLYGON", "MULTIPOLYGON")
+_RING = re.compile(r"\(([^()]*)\)")
 
 
 class DtroClient:
@@ -112,3 +117,40 @@ def speed_provisions(record: dict) -> list[dict]:
                            if s.startswith("SRID=")],
         })
     return out
+
+
+def _try_wkt(body: str):
+    try:
+        g = shapely.from_wkt(body)
+    except shapely.errors.ShapelyError:
+        return None
+    return None if g is None or g.is_empty else g
+
+
+def parse_ewkt(ewkt: str):
+    """D-TRO EWKT (BNG) -> (shapely geometry or None, reason).
+
+    reason is "ok", "repaired_split_ring", "not_27700", "kind_<KIND>" (e.g. points,
+    which cannot describe a stretch of road) or "unparsable". Some publishers split
+    a polygon's single outer ring into several unclosed pieces; when the pieces
+    joined end to end close the ring, they are rejoined into one polygon.
+    """
+    srid, _, body = ewkt.partition(";")
+    if srid.strip().upper() != "SRID=27700":
+        return None, "not_27700"
+    kind = body.lstrip().split("(", 1)[0].strip().upper()
+    if kind not in LINEAR_KINDS:
+        return None, f"kind_{kind or 'unknown'}"
+    g = _try_wkt(body)
+    if g is not None:
+        return g, "ok"
+    if kind == "POLYGON":
+        pieces = [[c.strip() for c in r.split(",")] for r in _RING.findall(body)]
+        coords = [c for piece in pieces for c in piece]
+        if len(pieces) > 1 and coords and coords[0] == coords[-1]:
+            g = _try_wkt(f"POLYGON(({', '.join(coords)}))")
+            if g is not None:
+                # Not made valid: make_valid takes seconds on 30k-vertex zone polygons
+                # and distance queries do not need it.
+                return g, "repaired_split_ring"
+    return None, "unparsable"
