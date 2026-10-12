@@ -161,6 +161,45 @@ UI on 466×466 round AMOLED:
 
 Interaction: vertical swipe cycles Car → Commercial → Trailer. Selected mode persisted in NVS.
 
+### 7.1 Height, width and weight restriction warnings (added 2026-10-12)
+
+The gauge warns when the road ahead has a height, width or weight restriction the current vehicle configuration exceeds.
+
+- **Sources:** OSM `maxheight` / `maxwidth` / `maxweight` (+ `:physical`, `maxweightrating`, `maxweight:hgv`) on ways and on nodes (e.g. `barrier=height_restrictor` at car parks); D-TRO `dimensionMaximum*` orders (height structural / with TRO, width, length, weight environmental / structural). Measured in Stage 1 Tasks 9b and 11b.
+- **Applicability:** weight limits that apply only to goods vehicles (OSM `maxweight:hgv`, D-TRO environmental weight limits, lorry-symbol signs) are checked only in Commercial mode; structural / all-vehicle limits in every mode.
+- **Look-ahead:** check the matched way and its continuation in the direction of travel for roughly the next 300–500 m (tuned in Stage 4), so the warning comes before the restriction, not at it.
+- **Error asymmetry is the reverse of speed limits:** a missed restriction is the costly failure, a false alarm is cheap. Warn when any plausible match candidate ahead carries a violated restriction, not only the most likely one.
+- **Display:** flash the restriction roundel itself (UK height/width signs show feet-and-inches, weight signs tonnes), alternating with the speed limit, until the restriction is passed or the route diverges from it.
+
+### 7.2 Vehicle profile and setup screens (added 2026-10-12)
+
+Profile values (NVS, written only when changed):
+
+| Setting | Default | Step | Shown as |
+|---|---|---|---|
+| Vehicle height | 2.20 m | 0.05 m | m and ft/in |
+| Vehicle width (body, excluding mirrors, as UK width limits are measured) | 1.79 m | 0.05 m | m and ft/in |
+| Vehicle gross weight | 3,000 kg | 100 kg | kg and t |
+| Trailer height | 2.20 m | 0.05 m | m and ft/in |
+| Trailer width | 1.79 m | 0.05 m | m and ft/in |
+| Train weight (vehicle + trailer) | 6,500 kg | 100 kg | kg and t |
+
+What each mode checks:
+
+| Mode | Height | Width | Weight | Speed limits (single / dual / motorway) |
+|---|---|---|---|---|
+| Car | vehicle | vehicle | vehicle gross | 60 / 70 / 70 |
+| Commercial | vehicle | vehicle | vehicle gross (also goods-only limits) | 50 / 60 / 70 |
+| Trailer | max(vehicle, trailer) | max(vehicle, trailer) | train weight | 50 / 60 / 60 |
+
+Setup interaction:
+
+- **Enter:** long-press the dial (~2 s), only when stationary (GPS speed < ~3 mph); ignored otherwise.
+- **Navigate:** one setting per screen; horizontal swipe between screens (vertical swipe remains mode change on the main dial only).
+- **Adjust:** large on-screen ▲ / ▼ touch buttons; hold to auto-repeat with acceleration. Value drawn inside a red-ring roundel in the style of the matching sign.
+- **Exit:** long-press again, or automatically after ~20 s without a touch or as soon as the vehicle moves (> ~3 mph). Always returns to the speed dial; changes saved to NVS on exit.
+- Follow the Td5 display lesson: delete non-current LVGL screens when switching.
+
 ## 8. Error handling
 
 - Corrupt tile (hash mismatch): fall back to the previous verified version if present, else that cell reads unknown; flagged for re-download when online.
