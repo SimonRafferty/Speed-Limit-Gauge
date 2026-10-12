@@ -1,6 +1,6 @@
-bytes,seconds,km,ways,bytes_per_km,area,error,attempt
-9918951.0,1.94,869.5,15790.0,11407.0,london_camden_islington,,1
-,,,,,horsham,HTTPError: 504 Server Error: Gateway Timeout for url: https://overpass-api.de/api/interpreter,1
-,,,,,midhurst_downs,HTTPError: 504 Server Error: Gateway Timeout for url: https://overpass-api.de/api/interpreter,1
-,,,,,horsham,HTTPError: 504 Server Error: Gateway Timeout for url: https://overpass-api.de/api/interpreter,2
-,,,,,midhurst_downs,HTTPError: 504 Server Error: Gateway Timeout for url: https://overpass-api.de/api/interpreter,2
+utc_time,endpoint,area,attempt,bytes,seconds,km,ways,bytes_per_km,error
+,,london_camden_islington,1,9918951,1.94,869.5,15790,11407,
+,,horsham,1,,,,,,HTTPError: 504 Server Error: Gateway Timeout for url: https://overpass-api.de/api/interpreter
+,,midhurst_downs,1,,,,,,HTTPError: 504 Server Error: Gateway Timeout for url: https://overpass-api.de/api/interpreter
+,,horsham,2,,,,,,HTTPError: 504 Server Error: Gateway Timeout for url: https://overpass-api.de/api/interpreter
+,,midhurst_downs,2,,,,,,HTTPError: 504 Server Error: Gateway Timeout for url: https://overpass-api.de/api/interpreter
