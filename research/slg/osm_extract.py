@@ -15,6 +15,8 @@ DRIVABLE = frozenset({
     "motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link",
     "secondary", "secondary_link", "tertiary", "tertiary_link", "unclassified",
     "residential", "living_street", "service",
+    # Byways / green lanes / unsurfaced roads are matched too (spec 7.1a).
+    "track",
 })
 
 TAG_KEYS = (
@@ -24,6 +26,10 @@ TAG_KEYS = (
     "maxheight", "maxheight:physical", "maxwidth", "maxwidth:physical",
     "maxweight", "maxweightrating", "maxweight:hgv", "maxweight:goods",
     "hgv", "goods", "bridge", "tunnel", "covered",
+    # Motor-vehicle legality (slg.access) and track character.
+    "access", "motor_vehicle", "motorcar", "vehicle",
+    "motor_vehicle:conditional", "motorcar:conditional", "vehicle:conditional",
+    "access:conditional", "designation", "prow_ref", "tracktype", "surface",
 )
 
 RESTRICTION_KEYS = ("maxheight", "maxheight:physical", "maxwidth", "maxwidth:physical",
@@ -46,14 +52,20 @@ def download_extract(region: str, dest_dir: Path = DATA / "osm", session=request
     return dest
 
 
-def _drivable_ways(pbf: Path, area: Area):
-    """Yield (way, coords) for drivable ways with at least one node inside the area bbox."""
+def _ways_touching(pbf: Path, area: Area, drivable_only: bool = True):
+    """Yield (way, coords) for ways with at least one node inside the area bbox.
+
+    drivable_only=True keeps highway ways in DRIVABLE; False keeps every way (any tags).
+    """
     fp = (osmium.FileProcessor(str(pbf))
           .with_locations()
-          .with_filter(osmium.filter.EntityFilter(osmium.osm.WAY))
-          .with_filter(osmium.filter.KeyFilter("highway")))
+          .with_filter(osmium.filter.EntityFilter(osmium.osm.WAY)))
+    if drivable_only:
+        fp = fp.with_filter(osmium.filter.KeyFilter("highway"))
     for obj in fp:
-        if not obj.is_way() or obj.tags.get("highway") not in DRIVABLE:
+        if not obj.is_way():
+            continue
+        if drivable_only and obj.tags.get("highway") not in DRIVABLE:
             continue
         coords = [(n.lon, n.lat) for n in obj.nodes if n.location.valid()]
         if len(coords) < 2 or not any(area.contains(lon, lat) for lon, lat in coords):
@@ -61,9 +73,19 @@ def _drivable_ways(pbf: Path, area: Area):
         yield obj, coords
 
 
+def _drivable_ways(pbf: Path, area: Area):
+    """Yield (way, coords) for drivable ways with at least one node inside the area bbox."""
+    return _ways_touching(pbf, area, drivable_only=True)
+
+
 def drivable_node_ids(pbf: Path, area: Area) -> set[int]:
     """Node refs of every drivable way touching the area (used to drop footway/cycle barriers)."""
     return {n.ref for obj, _ in _drivable_ways(pbf, area) for n in obj.nodes}
+
+
+def way_node_ids(pbf: Path, area: Area) -> set[int]:
+    """Node refs of every way of any kind touching the area (a node not in here is free-standing)."""
+    return {n.ref for obj, _ in _ways_touching(pbf, area, drivable_only=False) for n in obj.nodes}
 
 
 def ways_in_area(pbf: Path, area: Area) -> list[dict]:

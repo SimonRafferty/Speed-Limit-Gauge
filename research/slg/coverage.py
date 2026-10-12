@@ -12,6 +12,7 @@ ROAD_CLASS = {
     "unclassified": "unclassified",
     "residential": "residential", "living_street": "residential",
     "service": "service",
+    "track": "track",
 }
 
 # Kinds that give a legal limit (or a national-limit form) a consumer can act on.

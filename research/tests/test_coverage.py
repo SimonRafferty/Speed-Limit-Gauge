@@ -67,3 +67,8 @@ def test_usable_excludes_variable_and_ambiguous():
     assert t.loc["tertiary", "pct_km_tagged"] == pytest.approx(100.0)
     assert t.loc["tertiary", "pct_km_usable"] == pytest.approx(50.0)
     assert t.loc["tertiary", "ways_usable"] == 1
+
+
+def test_annotate_track_class():
+    df = _df().assign(highway=["track", "residential", "trunk", "trunk_link"])
+    assert annotate(df)["road_class"].iloc[0] == "track"

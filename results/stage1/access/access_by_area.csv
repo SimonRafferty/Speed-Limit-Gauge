@@ -1,0 +1,13 @@
+area,country,condition,track_ways,track_km,track_pct_km_tagged,track_pct_km_usable,track_prohibited_km,track_prohibited_ways,track_conditional_km,track_conditional_ways,track_allowed_km,track_allowed_ways,track_unknown_km,track_unknown_ways,all_prohibited_km,all_prohibited_ways,all_conditional_km,all_conditional_ways,all_allowed_km,all_allowed_ways,all_unknown_km,all_unknown_ways,prow_over_generic_permission_ways
+london_camden_islington,england,urban,47,6.75,12.5,12.5,1.97,9,0.0,0,2.22,19,2.57,19,9.07,228,14.01,198,119.26,2461,733.94,12950,0
+manchester_centre,england,urban,17,1.25,0.0,0.0,0.06,1,0.0,0,0.81,8,0.39,8,5.18,80,1.1,20,85.95,3080,509.6,8099,0
+crawley,england,suburban,267,69.92,0.0,0.0,5.41,21,0.0,0,49.74,148,14.77,98,10.32,71,0.06,1,119.54,1151,600.64,7695,2
+horsham,england,suburban,96,18.41,0.0,0.0,1.42,5,0.0,0,16.35,80,0.64,11,8.91,63,0.0,0,74.03,743,290.12,3240,18
+midhurst_downs,england,rural,567,235.51,0.6,0.6,77.42,166,0.0,0,76.48,185,81.6,216,99.59,279,0.0,0,97.43,316,327.67,1374,14
+m23_a23_crawley_brighton,england,motorway_trunk,1626,329.75,0.6,0.6,64.63,293,0.0,0,176.22,772,88.9,561,90.05,463,0.59,2,261.58,1790,1020.85,8372,17
+a27_chichester_worthing,england,motorway_trunk,666,167.38,0.0,0.0,34.05,87,0.0,0,52.22,201,81.11,378,47.64,207,0.0,0,175.35,1520,1415.0,11110,6
+m25_surrey,england,motorway_trunk,974,192.69,0.5,0.5,24.02,87,0.0,0,90.09,457,78.58,430,54.88,292,12.13,8,543.76,6162,1829.35,17125,41
+cardiff,wales,urban,135,32.29,0.0,0.0,1.86,9,0.0,0,19.94,82,10.49,44,6.02,71,0.0,0,153.94,1564,935.6,11087,0
+powys_rural,wales,rural,1002,388.28,0.0,0.0,67.53,180,0.0,0,96.18,219,224.57,603,105.45,290,0.0,0,157.93,518,921.7,2911,27
+edinburgh,scotland,urban,71,5.94,0.0,0.0,1.94,9,0.0,0,1.26,18,2.73,44,7.41,75,5.18,12,71.78,1156,647.38,7946,0
+a9_perth_pitlochry,scotland,motorway_trunk,2758,1169.35,0.0,0.0,8.44,22,0.0,0,56.84,87,1104.07,2649,12.35,38,0.0,0,129.03,456,2247.22,8243,0
