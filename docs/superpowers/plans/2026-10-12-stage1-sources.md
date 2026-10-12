@@ -36,6 +36,8 @@
 | `research/slg/overpass.py` | Overpass query builder and latency/bytes probe |
 | `research/slg/dtro.py` | D-TRO OAuth client and speed-provision parser |
 | `research/slg/mapillary.py` | Mapillary map-feature fetch and speed-sign parsing |
+| `research/slg/restrictions.py` | Parse OSM height/width (m) and weight (t) values |
+| `research/stage1/osm_restrictions.py` | Script: OSM restriction coverage per area |
 | `research/slg/agreement.py` | Snap point/line limits from another source onto OSM ways and score agreement |
 | `research/stage1/osm_coverage.py` | Script: OSM coverage and freshness for all areas |
 | `research/stage1/overpass_probe.py` | Script: live-query latency and bytes per km |
@@ -1096,6 +1098,258 @@ git commit -m "feat(stage1): source-vs-OSM agreement matcher"
 
 ---
 
+### Task 9b: OSM height, width and weight restrictions
+
+Added 2026-10-12: the gauge will also warn when the road ahead has a height, width or weight restriction the vehicle exceeds (default profile 2.2 m high, 3,000 kg; trailer handling decided separately). For this product, *missing* a restriction is the costly failure, the opposite of speed limits. This task measures what OSM holds. In OSM, restrictions sit on ways (`maxheight` on the road under a bridge) and on nodes (`barrier=height_restrictor` with `maxheight`, common at car-park entrances).
+
+GB value conventions: heights and widths in metres (`2.1`, `2.1 m`) or feet and inches (`6'6"`, `6'6''`, `7'`); sentinels `default`, `none`, `below_default`, `no_sign`, `no_indications`, `unsigned`. Weights in tonnes (`3`, `3 t`, `7.5`) or kg (`7500 kg`).
+
+**Files:**
+- Create: `research/slg/restrictions.py`, `research/tests/test_restrictions.py`, `research/stage1/osm_restrictions.py`
+- Modify: `research/slg/osm_extract.py` (TAG_KEYS, new `restriction_nodes_in_area`), `research/tests/test_osm_extract.py`
+- Output: `results/stage1/restrictions/*.csv`
+
+- [ ] **Step 1: Write the failing tests**
+
+`research/tests/test_restrictions.py`:
+```python
+import pytest
+
+from slg.restrictions import parse_length_m, parse_weight_t
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("2.1", 2.1), ("2.1 m", 2.1), ("2.1m", 2.1),
+    ("6'6\"", 1.981), ("6'6''", 1.981), ("7'", 2.134), ("13'9\"", 4.191), ("6 ft 6 in", 1.981),
+    ("default", None), ("none", None), ("below_default", None), ("", None), (None, None),
+    ("tall", None),
+])
+def test_parse_length_m(raw, expected):
+    got = parse_length_m(raw)
+    assert (got is None and expected is None) or got == pytest.approx(expected, abs=0.001)
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("3", 3.0), ("3 t", 3.0), ("7.5", 7.5), ("7.5t", 7.5), ("7500 kg", 7.5),
+    ("none", None), (None, None), ("heavy", None),
+])
+def test_parse_weight_t(raw, expected):
+    got = parse_weight_t(raw)
+    assert (got is None and expected is None) or got == pytest.approx(expected)
+```
+
+Append to `research/tests/test_osm_extract.py`:
+```python
+from slg.osm_extract import restriction_nodes_in_area
+
+NODES_XML = """<?xml version='1.0' encoding='UTF-8'?>
+<osm version="0.6" generator="test">
+ <node id="1" version="1" timestamp="2024-01-01T00:00:00Z" lat="51.000" lon="-0.300">
+  <tag k="barrier" v="height_restrictor"/><tag k="maxheight" v="2.0"/>
+ </node>
+ <node id="2" version="1" timestamp="2024-01-01T00:00:00Z" lat="52.000" lon="-0.300">
+  <tag k="maxheight" v="2.0"/>
+ </node>
+ <node id="3" version="1" timestamp="2024-01-01T00:00:00Z" lat="51.001" lon="-0.300">
+  <tag k="barrier" v="gate"/>
+ </node>
+</osm>
+"""
+
+
+def test_restriction_nodes_in_area(tmp_path):
+    f = tmp_path / "n.osm"
+    f.write_text(NODES_XML, encoding="utf-8")
+    rows = restriction_nodes_in_area(f, AREA)
+    assert [r["node_id"] for r in rows] == [1]
+    assert rows[0]["barrier"] == "height_restrictor" and rows[0]["maxheight"] == "2.0"
+    assert rows[0]["lon"] == pytest.approx(-0.3) and rows[0]["area"] == "t"
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `.venv/Scripts/python -m pytest research/tests/test_restrictions.py research/tests/test_osm_extract.py -v`
+Expected: FAIL with `ModuleNotFoundError: No module named 'slg.restrictions'` and `ImportError` for `restriction_nodes_in_area`.
+
+- [ ] **Step 3: Implement**
+
+`research/slg/restrictions.py`:
+```python
+"""Parse OSM height/width (metres) and weight (tonnes) restriction values, GB conventions.
+
+Unparseable values and sentinels ('default', 'none', ...) return None; callers count them
+separately so data-quality numbers stay honest.
+"""
+import re
+
+FEET_M = 0.3048
+INCH_M = 0.0254
+
+_METRES = re.compile(r"^(\d+(?:\.\d+)?)\s*m?$")
+_FEET_INCHES = re.compile(r"""^(\d+)\s*(?:'|ft)\s*(?:(\d+(?:\.\d+)?)\s*(?:"|''|in)?)?$""")
+_TONNES = re.compile(r"^(\d+(?:\.\d+)?)\s*t?$")
+_KG = re.compile(r"^(\d+(?:\.\d+)?)\s*kg$")
+
+
+def parse_length_m(raw) -> float | None:
+    if not isinstance(raw, str):
+        return None
+    v = raw.strip().lower()
+    if m := _METRES.match(v):
+        return float(m[1])
+    if m := _FEET_INCHES.match(v):
+        return round(int(m[1]) * FEET_M + float(m[2] or 0) * INCH_M, 3)
+    return None
+
+
+def parse_weight_t(raw) -> float | None:
+    if not isinstance(raw, str):
+        return None
+    v = raw.strip().lower()
+    if m := _TONNES.match(v):
+        return float(m[1])
+    if m := _KG.match(v):
+        return float(m[1]) / 1000
+    return None
+```
+
+In `research/slg/osm_extract.py`, extend `TAG_KEYS` (append these after `"ref",`):
+```python
+    "maxheight", "maxheight:physical", "maxwidth", "maxwidth:physical",
+    "maxweight", "maxweightrating", "maxweight:hgv", "maxweight:goods",
+    "hgv", "goods", "bridge", "tunnel", "covered",
+```
+and add:
+```python
+RESTRICTION_KEYS = ("maxheight", "maxheight:physical", "maxwidth", "maxwidth:physical",
+                    "maxweight", "maxweightrating", "maxweight:hgv")
+
+
+def restriction_nodes_in_area(pbf: Path, area: Area) -> list[dict]:
+    """Nodes carrying a height/width/weight restriction inside the area bbox (e.g. car-park barriers)."""
+    fp = (osmium.FileProcessor(str(pbf))
+          .with_filter(osmium.filter.EntityFilter(osmium.osm.NODE))
+          .with_filter(osmium.filter.KeyFilter(*RESTRICTION_KEYS)))
+    rows = []
+    for n in fp:
+        if not n.location.valid() or not area.contains(n.location.lon, n.location.lat):
+            continue
+        row = {"node_id": n.id, "area": area.name, "country": area.country,
+               "lon": n.location.lon, "lat": n.location.lat, "barrier": n.tags.get("barrier")}
+        for k in RESTRICTION_KEYS:
+            row[k] = n.tags.get(k)
+        rows.append(row)
+    return rows
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `.venv/Scripts/python -m pytest -q`
+Expected: all pass (previous count + 23).
+
+- [ ] **Step 5: Re-extract ways with the new tags**
+
+The per-area way caches predate the new TAG_KEYS. Delete them and re-run Task 7's script; coverage CSVs must come out identical (the new columns don't affect them).
+
+```bash
+rm -f data/stage1/*_ways.parquet
+.venv/Scripts/python research/stage1/osm_coverage.py
+git diff --stat results/stage1/osm
+```
+Expected: no changes to `coverage_*.csv` (only `extracts.csv` mtimes may differ). If coverage numbers change, stop and report.
+
+- [ ] **Step 6: Write and run the restrictions script**
+
+`research/stage1/osm_restrictions.py`:
+```python
+"""Stage 1: OSM height/width/weight restriction coverage per test area.
+
+Run: .venv/Scripts/python research/stage1/osm_restrictions.py
+"""
+import pandas as pd
+
+from slg.areas import AREAS
+from slg.osm_extract import RESTRICTION_KEYS, download_extract, restriction_nodes_in_area
+from slg.paths import DATA, RESULTS
+from slg.restrictions import parse_length_m, parse_weight_t
+
+OUT = RESULTS / "stage1" / "restrictions"
+LENGTH_KEYS = ("maxheight", "maxheight:physical", "maxwidth", "maxwidth:physical")
+WEIGHT_KEYS = ("maxweight", "maxweightrating", "maxweight:hgv")
+
+
+def parsed(df: pd.DataFrame) -> pd.DataFrame:
+    """Add <key>_m / <key>_t numeric columns for every restriction key present."""
+    out = df.copy()
+    for k in LENGTH_KEYS:
+        if k in out:
+            out[k + "_m"] = out[k].map(parse_length_m)
+    for k in WEIGHT_KEYS:
+        if k in out:
+            out[k + "_t"] = out[k].map(parse_weight_t)
+    return out
+
+
+def main():
+    OUT.mkdir(parents=True, exist_ok=True)
+    summary, points, unparsed = [], [], []
+    for area in AREAS:
+        cache = DATA / "stage1" / f"{area.name}_ways.parquet"
+        if not cache.exists():
+            print("missing", cache)
+            continue
+        ways = parsed(pd.read_parquet(cache))
+        nodes = []
+        for region in area.regions:
+            nodes += restriction_nodes_in_area(download_extract(region), area)
+        nodes = parsed(pd.DataFrame(nodes).drop_duplicates("node_id")) if nodes else pd.DataFrame()
+        points.append(nodes)
+        row = {"area": area.name, "country": area.country}
+        for kind, df in (("way", ways), ("node", nodes)):
+            for k in RESTRICTION_KEYS:
+                if df.empty or k not in df:
+                    continue
+                col = k + ("_t" if k in WEIGHT_KEYS else "_m")
+                present, ok = df[k].notna(), df[col].notna()
+                row[f"{kind}_{k}_n"] = int(present.sum())
+                row[f"{kind}_{k}_parsed"] = int((present & ok).sum())
+                unparsed += [{"area": area.name, "kind": kind, "key": k, "value": v}
+                             for v in df.loc[present & ~ok, k]]
+        # What would trip the default profile (2.2 m, 3.0 t)? Heights flagged with a 0.1 m margin.
+        heights = [s for s in (ways.get("maxheight_m"), nodes.get("maxheight_m")) if s is not None]
+        h = pd.concat(heights) if heights else pd.Series(dtype=float)
+        w = ways.get("maxweight_t", pd.Series(dtype=float))
+        row["heights_below_2_3m"] = int((h < 2.3).sum())
+        row["weights_below_3_5t"] = int((w < 3.5).sum())
+        summary.append(row)
+        print(row)
+    pd.DataFrame(summary).to_csv(OUT / "osm_restrictions_by_area.csv", index=False)
+    pts = pd.concat([p for p in points if not p.empty], ignore_index=True)
+    pts.to_csv(OUT / "osm_restriction_nodes.csv", index=False)
+    pd.DataFrame(unparsed, columns=["area", "kind", "key", "value"]).value_counts() \
+        .to_csv(OUT / "unparsed_values.csv")
+    if "maxheight_m" in pts:
+        bins = [0, 1.8, 2.0, 2.1, 2.2, 2.3, 2.5, 3.0, 4.0, 5.0, 10]
+        pd.cut(pts["maxheight_m"].dropna(), bins).value_counts().sort_index() \
+            .to_csv(OUT / "node_height_histogram.csv")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+Run: `.venv/Scripts/python research/stage1/osm_restrictions.py`
+Expected: one dict per area. Car-park barriers (heights 1.9–2.2 m) should appear in urban and suburban areas; if every area shows zero restriction nodes, suspect the KeyFilter and check one area by hand before trusting it.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add research/slg/restrictions.py research/slg/osm_extract.py research/tests/test_restrictions.py research/tests/test_osm_extract.py research/stage1/osm_restrictions.py results/stage1/restrictions results/stage1/osm
+git commit -m "feat(stage1): OSM height/width/weight restriction coverage"
+```
+
+---
+
 ### Task 10: D-TRO client and speed-provision parser
 
 API facts (from `github.com/pa-digital/dft-dtro-api-docs`, `api_quickstart.rst` and `a_tour_of_the_data_model.rst`):
@@ -1429,6 +1683,133 @@ git add results/stage1/dtro 2>/dev/null; git commit -m "feat(stage1): D-TRO bulk
 
 ---
 
+### Task 11b: D-TRO height, width and weight orders
+
+D-TRO schema (v3.5–v5.0, `github.com/department-for-transport-public/D-TRO`) restriction regulation types: `dimensionMaximumHeightStructural`, `dimensionMaximumHeightWithTRO`, `dimensionMaximumWidth`, `dimensionMaximumLength`, `dimensionMaximumWeightEnvironmental`, `dimensionMaximumWeightStructural`. The limit values live in the regulation's condition tree under vehicle characteristics: `maximumHeightCharacteristic.vehicleHeight` (m), `maximumWidthCharacteristic.vehicleWidth` (m), `maximumLengthCharacteristic.vehicleLength` (m), `maximumGrossWeightCharacteristic.grossVehicleWeight` (t, "including any trailers") with `typeOfWeight`. Environmental weight limits normally target goods vehicles; structural ones apply to all vehicles, so keep the type for the device to tell them apart.
+
+**Files:**
+- Modify: `research/slg/dtro.py`, `research/tests/test_dtro.py`, `research/stage1/dtro_pull.py`
+- Output: `results/stage1/dtro/restriction_provisions.csv`, `results/stage1/dtro/restriction_counts.csv`
+
+- [ ] **Step 1: Write the failing test** (append to `research/tests/test_dtro.py`)
+
+```python
+from slg.dtro import restriction_provisions
+
+RECORD_RESTRICT = {
+    "id": "r1", "schemaVersion": "5.0.0",
+    "data": {"source": {"provision": [
+        {"reference": "H1", "actionType": "new",
+         "regulation": [{"regulationType": "dimensionMaximumHeightStructural",
+                         "condition": [{"vehicleCharacteristics": {
+                             "maximumHeightCharacteristic": {"vehicleHeight": 2.1}}}]}],
+         "regulatedPlace": [{"linearGeometry": {"linestring": "SRID=27700;LINESTRING(1 1, 2 2)"}}]},
+        {"reference": "W1", "actionType": "new",
+         "regulation": [{"regulationType": "dimensionMaximumWeightStructural",
+                         "condition": [{"vehicleCharacteristics": {
+                             "maximumGrossWeightCharacteristic": {"grossVehicleWeight": 3.0,
+                                                                  "typeOfWeight": "maximum"}}}]}],
+         "regulatedPlace": []},
+        {"reference": "S1", "regulation": [{"regulationType": "speedLimitValueBased"}], "regulatedPlace": []},
+    ]}},
+}
+
+
+def test_restriction_provisions():
+    out = restriction_provisions(RECORD_RESTRICT)
+    assert [p["provision_ref"] for p in out] == ["H1", "W1"]
+    assert out[0]["height_m"] == 2.1 and out[0]["weight_t"] is None
+    assert out[0]["geometries"] == ["SRID=27700;LINESTRING(1 1, 2 2)"]
+    assert out[1]["weight_t"] == 3.0 and out[1]["type_of_weight"] == "maximum"
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `.venv/Scripts/python -m pytest research/tests/test_dtro.py -v`
+Expected: FAIL with `ImportError: cannot import name 'restriction_provisions'`.
+
+- [ ] **Step 3: Implement** (add to `research/slg/dtro.py`)
+
+```python
+RESTRICTION_TYPES = (
+    "dimensionMaximumHeightStructural", "dimensionMaximumHeightWithTRO",
+    "dimensionMaximumWidth", "dimensionMaximumLength",
+    "dimensionMaximumWeightEnvironmental", "dimensionMaximumWeightStructural",
+)
+_VALUE_KEYS = {"vehicleHeight": "height_m", "vehicleWidth": "width_m",
+               "vehicleLength": "length_m", "grossVehicleWeight": "weight_t",
+               "typeOfWeight": "type_of_weight"}
+
+
+def _first_values(obj, found=None) -> dict:
+    """First occurrence of each _VALUE_KEYS key anywhere in obj."""
+    found = {} if found is None else found
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k in _VALUE_KEYS and _VALUE_KEYS[k] not in found and not isinstance(v, (dict, list)):
+                found[_VALUE_KEYS[k]] = v
+            else:
+                _first_values(v, found)
+    elif isinstance(obj, list):
+        for v in obj:
+            _first_values(v, found)
+    return found
+
+
+def restriction_provisions(record: dict) -> list[dict]:
+    """One row per height/width/length/weight regulation in a D-TRO record."""
+    source = record.get("data", {}).get("source", {})
+    out = []
+    for prov in source.get("provision", []):
+        for reg in prov.get("regulation", []):
+            rtype = reg.get("regulationType") or reg.get("generalRegulation", {}).get("regulationType")
+            if rtype not in RESTRICTION_TYPES:
+                continue
+            values = _first_values(reg)
+            out.append({
+                "dtro_id": record.get("id"),
+                "schema_version": record.get("schemaVersion"),
+                "provision_ref": prov.get("reference"),
+                "action": prov.get("actionType"),
+                "regulation_type": rtype,
+                **{col: values.get(col) for col in _VALUE_KEYS.values()},
+                "geometries": [s for s in _strings(prov.get("regulatedPlace", []))
+                               if s.startswith("SRID=")],
+            })
+    return out
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `.venv/Scripts/python -m pytest -q`
+Expected: all pass.
+
+- [ ] **Step 5: Extend `research/stage1/dtro_pull.py`**
+
+Import `restriction_provisions`, collect it in the same record loop as `speed_provisions` (`restrs += restriction_provisions(rec)`), and after the speed outputs write:
+```python
+    rdf = pd.DataFrame(restrs)
+    if not rdf.empty:
+        rdf.drop(columns="geometries").to_csv(OUT / "restriction_provisions.csv", index=False)
+        rdf.groupby("regulation_type").agg(
+            n=("provision_ref", "count"),
+            min_height_m=("height_m", "min"), min_width_m=("width_m", "min"),
+            min_weight_t=("weight_t", "min"),
+        ).to_csv(OUT / "restriction_counts.csv")
+```
+Also add `"restriction_provisions": len(rdf)` to `volume.csv`.
+
+- [ ] **Step 6: Run and commit**
+
+Run: `.venv/Scripts/python research/stage1/dtro_pull.py`
+Expected: speed and restriction counts printed; `restriction_counts.csv` written.
+```bash
+git add research/slg/dtro.py research/tests/test_dtro.py research/stage1/dtro_pull.py results/stage1/dtro
+git commit -m "feat(stage1): D-TRO height/width/weight restriction orders"
+```
+
+---
+
 ### Task 12: Mapillary speed-sign detections
 
 Mapillary map features are de-duplicated sign positions derived from street-level imagery. Endpoint: `https://graph.mapillary.com/map_features` with `access_token`, `fields=id,object_value,geometry,first_seen_at,last_seen_at`, `bbox=minlon,minlat,maxlon,maxlat`, `limit`. The API rejects large boxes, so the area is chunked into 0.05° cells. Speed values are parsed from `object_value` (e.g. `regulatory--maximum-speed-limit-30--g1`); every speed-related value is kept raw so unexpected sign classes (national-limit, end-of-limit) show up in the counts.
@@ -1664,7 +2045,8 @@ Sections, all filled from measured outputs (no estimates presented as measuremen
 2. OSM coverage: table of % km tagged by road class (overall and per country), from `coverage_by_country_class.csv`; the share that is national-limit form vs explicit mph; odd-value rate.
 3. Freshness: median age and % edited within 2 years by class; the caveat that way timestamp ≠ maxspeed edit time.
 4. Live-query cost: Overpass latency and bytes/km from `probe.csv`.
-5. Agreement: D-TRO and Mapillary tables (or "pending credentials/token"), with the hand-checked disagreement tally.
+5. Restrictions: OSM height/width/weight coverage (ways and barrier nodes, distribution of heights near 2.2 m) and D-TRO restriction orders by type.
+6. Agreement: D-TRO and Mapillary tables (or "pending credentials/token"), with the hand-checked disagreement tally.
 6. Failed avenues: anything that did not work and why.
 7. Implications for Stage 2 (which road classes need inference most, by km) and Stage 5 (bytes/km baseline; how OSM and D-TRO changes can be picked up incrementally for the offline-base + patch design).
 8. Footprint notes: none on device yet; record extract sizes and per-area parquet sizes.
