@@ -1,7 +1,7 @@
 import pytest
 
 from slg.areas import Area
-from slg.osm_extract import download_extract, restriction_nodes_in_area, ways_in_area
+from slg.osm_extract import download_extract, drivable_node_ids, restriction_nodes_in_area, ways_in_area
 
 OSM_XML = """<?xml version='1.0' encoding='UTF-8'?>
 <osm version="0.6" generator="test">
@@ -93,3 +93,25 @@ def test_restriction_nodes_in_area(tmp_path):
     assert [r["node_id"] for r in rows] == [1]
     assert rows[0]["barrier"] == "height_restrictor" and rows[0]["maxheight"] == "2.0"
     assert rows[0]["lon"] == pytest.approx(-0.3) and rows[0]["area"] == "t"
+
+
+DRIVABLE_XML = """<?xml version='1.0' encoding='UTF-8'?>
+<osm version="0.6" generator="test">
+ <node id="1" version="1" timestamp="2024-01-01T00:00:00Z" lat="51.000" lon="-0.300"/>
+ <node id="2" version="1" timestamp="2024-01-01T00:00:00Z" lat="51.001" lon="-0.300"/>
+ <node id="5" version="1" timestamp="2024-01-01T00:00:00Z" lat="51.002" lon="-0.300"/>
+ <node id="6" version="1" timestamp="2024-01-01T00:00:00Z" lat="51.003" lon="-0.300"/>
+ <way id="10" version="1" timestamp="2025-06-01T12:00:00Z">
+  <nd ref="1"/><nd ref="2"/><tag k="highway" v="residential"/>
+ </way>
+ <way id="11" version="1" timestamp="2025-06-01T12:00:00Z">
+  <nd ref="5"/><nd ref="6"/><tag k="highway" v="footway"/>
+ </way>
+</osm>
+"""
+
+
+def test_drivable_node_ids_excludes_footway_only_nodes(tmp_path):
+    f = tmp_path / "d.osm"
+    f.write_text(DRIVABLE_XML, encoding="utf-8")
+    assert drivable_node_ids(f, AREA) == {1, 2}

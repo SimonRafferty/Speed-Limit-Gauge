@@ -5,7 +5,8 @@ Run: .venv/Scripts/python research/stage1/osm_restrictions.py
 import pandas as pd
 
 from slg.areas import AREAS
-from slg.osm_extract import RESTRICTION_KEYS, download_extract, restriction_nodes_in_area
+from slg.osm_extract import (RESTRICTION_KEYS, download_extract, drivable_node_ids,
+                            restriction_nodes_in_area)
 from slg.paths import DATA, RESULTS
 from slg.restrictions import parse_length_m, parse_weight_t
 
@@ -35,10 +36,15 @@ def main():
             print("missing", cache)
             continue
         ways = parsed(pd.read_parquet(cache))
-        nodes = []
+        nodes, drivable = [], set()
         for region in area.regions:
-            nodes += restriction_nodes_in_area(download_extract(region), area)
+            pbf = download_extract(region)
+            nodes += restriction_nodes_in_area(pbf, area)
+            drivable |= drivable_node_ids(pbf, area)
         nodes = parsed(pd.DataFrame(nodes).drop_duplicates("node_id")) if nodes else pd.DataFrame()
+        if not nodes.empty:
+            # Barriers on footways/cycleways/bollard gaps are not on a road a car can use.
+            nodes["on_drivable"] = nodes["node_id"].isin(drivable)
         points.append(nodes)
         row = {"area": area.name, "country": area.country}
         for kind, df in (("way", ways), ("node", nodes)):
@@ -49,10 +55,15 @@ def main():
                 present, ok = df[k].notna(), df[col].notna()
                 row[f"{kind}_{k}_n"] = int(present.sum())
                 row[f"{kind}_{k}_parsed"] = int((present & ok).sum())
+                if kind == "node":
+                    on_road = df["on_drivable"]
+                    row[f"node_{k}_n_drivable"] = int((present & on_road).sum())
+                    row[f"node_{k}_parsed_drivable"] = int((present & ok & on_road).sum())
                 unparsed += [{"area": area.name, "kind": kind, "key": k, "value": v}
                              for v in df.loc[present & ~ok, k]]
         # What would trip the default profile (2.2 m, 3.0 t)? Heights flagged with a 0.1 m margin.
-        heights = [s for s in (ways.get("maxheight_m"), nodes.get("maxheight_m")) if s is not None]
+        road_nodes = nodes[nodes["on_drivable"]] if not nodes.empty else nodes
+        heights = [s for s in (ways.get("maxheight_m"), road_nodes.get("maxheight_m")) if s is not None]
         h = pd.concat(heights) if heights else pd.Series(dtype=float)
         w = ways.get("maxweight_t", pd.Series(dtype=float))
         row["heights_below_2_3m"] = int((h < 2.3).sum())
@@ -60,13 +71,14 @@ def main():
         summary.append(row)
         print(row)
     pd.DataFrame(summary).to_csv(OUT / "osm_restrictions_by_area.csv", index=False)
-    pts = pd.concat([p for p in points if not p.empty], ignore_index=True)
+    # Areas overlap, so pool unique nodes only (per-area rows above stay per-area).
+    pts = pd.concat([p for p in points if not p.empty], ignore_index=True).drop_duplicates("node_id")
     pts.to_csv(OUT / "osm_restriction_nodes.csv", index=False)
     pd.DataFrame(unparsed, columns=["area", "kind", "key", "value"]).value_counts() \
         .to_csv(OUT / "unparsed_values.csv")
     if "maxheight_m" in pts:
         bins = [0, 1.8, 2.0, 2.1, 2.2, 2.3, 2.5, 3.0, 4.0, 5.0, 10]
-        pd.cut(pts["maxheight_m"].dropna(), bins).value_counts().sort_index() \
+        pd.cut(pts.loc[pts["on_drivable"], "maxheight_m"].dropna(), bins).value_counts().sort_index() \
             .to_csv(OUT / "node_height_histogram.csv")
 
 

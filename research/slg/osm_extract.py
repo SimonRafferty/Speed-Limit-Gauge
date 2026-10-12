@@ -46,19 +46,30 @@ def download_extract(region: str, dest_dir: Path = DATA / "osm", session=request
     return dest
 
 
-def ways_in_area(pbf: Path, area: Area) -> list[dict]:
-    """Drivable ways with at least one node inside the area bbox."""
+def _drivable_ways(pbf: Path, area: Area):
+    """Yield (way, coords) for drivable ways with at least one node inside the area bbox."""
     fp = (osmium.FileProcessor(str(pbf))
           .with_locations()
           .with_filter(osmium.filter.EntityFilter(osmium.osm.WAY))
           .with_filter(osmium.filter.KeyFilter("highway")))
-    rows = []
     for obj in fp:
         if not obj.is_way() or obj.tags.get("highway") not in DRIVABLE:
             continue
         coords = [(n.lon, n.lat) for n in obj.nodes if n.location.valid()]
         if len(coords) < 2 or not any(area.contains(lon, lat) for lon, lat in coords):
             continue
+        yield obj, coords
+
+
+def drivable_node_ids(pbf: Path, area: Area) -> set[int]:
+    """Node refs of every drivable way touching the area (used to drop footway/cycle barriers)."""
+    return {n.ref for obj, _ in _drivable_ways(pbf, area) for n in obj.nodes}
+
+
+def ways_in_area(pbf: Path, area: Area) -> list[dict]:
+    """Drivable ways with at least one node inside the area bbox."""
+    rows = []
+    for obj, coords in _drivable_ways(pbf, area):
         ts = obj.timestamp
         row = {
             "way_id": obj.id,
