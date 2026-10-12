@@ -47,13 +47,19 @@ Schema versions seen (`schema_versions.csv`): 3.5.1 (107,407), 4.0.0 (35,612), 3
   so speed orders cannot be filtered server-side by type.
 - `regulation` is a single object rather than a list in ~47k provisions (`condition` likewise in v4).
 - 1,699 maximum-speed POLYGON geometries fail to parse because every ring is written
-  **unclosed**, and the last ring ends on a stray copy of the polygon's very first vertex
-  (`POLYGON((a … ),( … ),( … a))`). The pieces are separate rings, not fragments of one: the
-  gaps between consecutive pieces are hundreds of metres to ~11 km. `parse_ewkt` drops the stray
-  closing vertex, closes each piece onto its own start and returns a MultiPolygon
-  (`repaired_split_ring`); pieces with fewer than 3 distinct points are dropped. On this dump:
-  10,782 rings kept, 0 dropped (`geometry_parse.csv`). Results are not passed through
-  `make_valid` (seconds per 30k-vertex zone polygon; point-in-polygon does not need it).
+  **unclosed**, and the last ring ends on a stray copy of the outer ring's first vertex
+  (`POLYGON((a … ),( … ),( … a))`). They are ordinary shell-plus-holes polygons: the first
+  ring is the outer boundary (largest in all 1,699) and the others are holes inside it (roads
+  carved out of a 20 mph zone, for example). `parse_ewkt` drops the stray vertex and closes each
+  ring onto its own start; a ring inside an earlier shell becomes a hole of that shell, a ring
+  outside every shell starts a separate part (MultiPolygon). Rings with fewer than 3 distinct
+  points are dropped. On this dump (`geometry_parse.csv`): **1,691 shell-with-holes, 8
+  multi-part, 0 rings dropped**. A way whose midpoint is in a hole is not in the zone.
+  Results are not passed through `make_valid` (seconds per 30k-vertex zone polygon;
+  point-in-polygon does not need it). The agreement figures below did not change when holes
+  were added: no test-area way midpoint falls in a hole.
+- Diversion routes (`regulatedPlace.type = diversionRoute`) are excluded from every provision's
+  geometries: the signed alternative route is not where the order applies.
 - 218 speed geometries are POINTs (allowed pre-v5), unusable for matching a road; skipped.
 
 ## Speed provisions (`type_counts.csv`, `speed_provisions.csv`)
@@ -83,9 +89,25 @@ provisions with a numeric mph and type `maximumSpeedLimit`:
 
 Subsets: `all` is **historical** — every order in the dump, including roadworks limits long
 expired; `permanent` keeps permanent orders only; `in_force` keeps orders whose timeValidity
-covers the dump date (2026-09-06T01:01:46, from Last-Modified): start ≤ date and no end or
-end ≥ date. The window is applied to permanent orders too (287 permanent speed provisions carry
-an end date), and temporary orders without any timeValidity are excluded.
+covers the dump date: start ≤ date and no end or end ≥ date (equality counts as in force).
+The window is applied to permanent orders too (287 permanent speed provisions carry an end
+date); temporary orders without any timeValidity, and revoked or proposed orders, are excluded.
+
+**Time zone.** D-TRO times are Europe/London local wall-clock times, while the dump's
+Last-Modified header is GMT. The dump date is converted to local time before comparing:
+Sun, 06 Sep 2026 01:01:46 GMT = **2026-09-06T02:01:46** BST. All in-force / ended /
+not-yet-started logic lives in `slg.dtro` (`dump_date`, `in_force`, `ended`, `not_started`,
+`order_in_force`). **Not evaluated yet (Stage 4):** recurring periods (`validPeriod` days and
+times of day, e.g. school-time limits or seasonal closures) and the provision `actionType`
+(amendments and revocations of earlier provisions), so "in force" means "inside its overall
+start/end window".
+
+**Order nature** (`order_nature`, from the provision's `orderReportingPoint`): `ttroTtmo*` and
+`specialEvent*` = temporary, `permanent*` / `experimentalMakingPermanent` = permanent, other
+`experimental*` = experimental, `*Revocation` = **revoked**, `*NoticeOfIntention` = **proposed**
+(not made yet). Revoked and proposed orders are never in force and never red-X relevant. Speed
+rows keep the speed object's own `nature` plus `order_nature`; no speed provision in this dump
+is revoked or proposed.
 
 | area | subset | matched ways | agree | OSM higher | OSM lower | OSM untagged |
 |---|---|---|---|---|---|---|
@@ -110,22 +132,52 @@ areas is therefore negligible today; it is England-only (Wales may adopt; Scotla
 ## Height, width and weight orders (`restriction_counts.csv`, `restriction_provisions.csv`)
 
 355 dimension provisions; only 17 state a **limit value**. Nature is from the provision's
-`orderReportingPoint` (`order_nature`), not `isDynamic`; "ended" is relative to the dump date.
-Each row also carries start/end, the condition-set `operator`, and `has_exemption` / `exemption`
-for negated conditions (e.g. `loadingAndUnloading` = "except for loading").
+`orderReportingPoint` (`order_nature`), not `isDynamic`; "ended" and "in force" are relative to
+the dump date. Each row also carries start/end, the condition-set `operator`, and
+`has_exemption` / `exemption` for negated conditions (e.g. `loadingAndUnloading` = "except for
+loading"). Limit values inside a negated (exemption) condition are ignored, and values outside
+the OSM plausibility bounds (height/width 1–10 m, length 2–30 m, weight 0.5–60 t) are set to
+None and counted in `out_of_range` (0 on this dump).
 
-| type | n | with value | temporary | permanent | ended | with exemption | min |
-|---|---|---|---|---|---|---|---|
-| dimensionMaximumWeightStructural | 186 | 13 | 131 | 55 | 67 | 1 | 1.5 t |
-| dimensionMaximumHeightStructural | 84 | 0 | 14 | 70 | 10 | 0 | — |
-| dimensionMaximumWidth | 81 | 4 | 14 | 67 | 6 | 0 | 1.8 m |
-| dimensionMaximumLength | 4 | 0 | 2 | 2 | 2 | 0 | — |
+| type | n | with value | temporary | permanent | ended | in force | with exemption | min |
+|---|---|---|---|---|---|---|---|---|
+| dimensionMaximumWeightStructural | 186 | 13 | 131 | 55 | 67 | 109 | 1 | 1.5 t |
+| dimensionMaximumHeightStructural | 84 | 0 | 14 | 70 | 10 | 73 | 0 | — |
+| dimensionMaximumWidth | 81 | 4 | 14 | 67 | 6 | 74 | 0 | 1.8 m |
+| dimensionMaximumLength | 4 | 0 | 2 | 2 | 2 | 2 | 0 | — |
 
 Weight values: 3.5 t ×11, 1.5 t (except loading), 7.5 t (`typeOfWeight: maximumPermitted`, read from the same characteristic as the weight); widths 1.8, 2.0 ×2, 2.1 m.
 No `dimensionMaximumHeightWithTRO` or `dimensionMaximumWeightEnvironmental` at all.
 Separately (one-off survey, not in the script): 1,313 `movementOrderProhibitedAccess` regulations
 carry a `grossVehicleWeight` condition (HGV access bans, mostly 3.5 t / 7.5 t) — a larger
 weight source than the dimension orders, but they are not dimension types.
+
+## Prohibitions and closures (`prohibition_counts.csv`, `prohibition_counts_by_area.csv`)
+
+Red-X sources: `motorVehiclesProhibited`, `movementOrderProhibitedAccess`, `miscRoadClosure`,
+`miscPROWClosure`, `publicRightOfWayClosure`, `bannedMovementNoEntry`. 150,339 provisions,
+counted by type, order nature and whether a vehicle condition makes it a class ban (e.g. over
+3.5 t) rather than a full closure. `ended`, `not_yet_started` and `in_force_at_dump` are
+relative to the dump date; `access_exempt` marks "except for access" conditions; `recurring`
+marks provisions with recurring periods (not evaluated). Each row in the code also carries
+`direction` (from the regulated place's linear geometry, e.g. `startToEnd` for a one-way
+no-entry) when stated.
+
+| nature | provisions | in force at dump |
+|---|---|---|
+| temporary | 147,312 | 2,921 |
+| permanent | 2,612 | 2,560 |
+| unknown (`troOnRoadActiveStatus`) | 267 | 1 |
+| proposed | 146 | 0 |
+| revoked | 1 | 0 |
+| experimental | 1 | 1 |
+
+Almost all are temporary street-works road closures (`miscRoadClosure`, 147,683), 84 % already
+ended at the dump date. Permanent prohibitions are almost all `movementOrderProhibitedAccess` (2,611; 2,060
+with a vehicle condition, mostly weight-class bans, 1,505 of those "except for access"). By test
+area (bbox intersection, all natures): Manchester 649 (6 permanent, 12 proposed), A27 397,
+M25 Surrey 306, M23/A23 194, Crawley 144, Horsham 58, Midhurst 52; none in London Camden/
+Islington, Cardiff, Powys, Edinburgh or the A9.
 
 ## Incremental / changed-since options
 

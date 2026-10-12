@@ -3,12 +3,17 @@ import collections
 import os
 import re
 import time
+from datetime import datetime
+from email.utils import parsedate_to_datetime
+from zoneinfo import ZoneInfo
 
+import pandas as pd
 import requests
 import shapely
 from dotenv import load_dotenv
 
 from slg.paths import ROOT
+from slg.restrictions import LENGTH_RANGE_M, WEIGHT_RANGE_T
 
 BASES = {
     "integration": "https://dtro-integration.dft.gov.uk/v1",
@@ -72,6 +77,14 @@ def _strings(obj):
             yield from _strings(v)
 
 
+def _place_geometries(prov: dict) -> list[str]:
+    """EWKT strings of a provision's regulated places, excluding diversion routes
+    (the signed alternative route is not where the regulation applies)."""
+    return [s for place in _as_list(prov.get("regulatedPlace"))
+            if place.get("type") != "diversionRoute"
+            for s in _strings(place) if s.startswith("SRID=")]
+
+
 def _as_list(obj) -> list:
     """The dump stores some arrays as a single object; normalise to a list of dicts."""
     items = obj if isinstance(obj, list) else [obj] if obj else []
@@ -113,10 +126,12 @@ def speed_provisions(record: dict) -> list[dict]:
             "limit_type": detail.get("type"),
             "mph": detail.get("mphValue"),
             "nature": detail.get("nature"),
+            # From orderReportingPoint: flags revoked / proposed orders the speed
+            # object's own nature (permanent / temporary) cannot express.
+            "order_nature": order_nature(prov, reg),
             "is_dynamic": reg.get("isDynamic"),
             **_time_validity(reg),
-            "geometries": [s for s in _strings(prov.get("regulatedPlace", []))
-                           if s.startswith("SRID=")],
+            "geometries": _place_geometries(prov),
         })
     return out
 
@@ -129,28 +144,46 @@ def _try_wkt(body: str):
     return None if g is None or g.is_empty else g
 
 
-def _split_ring_polygons(body: str, stats) -> list:
-    """Polygons from a POLYGON body whose rings were published unclosed.
+def _split_ring_polygons(body: str, stats):
+    """Polygon / MultiPolygon from a POLYGON body whose rings were all published unclosed.
 
-    Production shape: several separate rings, each written without its closing
-    vertex, and the last ring ending on a stray copy of the first ring's start.
-    Junctions between consecutive pieces are hundreds of metres to km apart, so the
-    pieces are distinct rings: each is closed onto its own start. Pieces with fewer
-    than 3 distinct points are dropped.
+    Production shape: POLYGON((outer),(hole),...) with every ring written without its
+    closing vertex and the last ring ending on a stray copy of the outer ring's first
+    vertex. Each piece is closed onto its own start. A piece inside an earlier shell is
+    a hole of that shell; a piece outside every shell starts a new part. Pieces with
+    fewer than 3 distinct points are dropped. stats gets shell_with_holes / multipart /
+    single_ring and pieces_dropped (always present, possibly 0).
     """
     pieces = [[c.strip() for c in r.split(",") if c.strip()] for r in _RING.findall(body)]
     if len(pieces) > 1 and len(pieces[-1]) > 1 and pieces[-1][-1] == pieces[0][0]:
         pieces[-1] = pieces[-1][:-1]
-    polys = []
+    rings, dropped = [], 0
     for piece in pieces:
-        distinct = list(dict.fromkeys(piece))
-        g = _try_wkt(f"POLYGON(({', '.join(piece + [piece[0]])}))") if len(distinct) >= 3 else None
+        g = None
+        if len(set(piece)) >= 3:
+            g = _try_wkt(f"POLYGON(({', '.join(piece + [piece[0]])}))")
         if g is None:
-            stats["pieces_dropped"] += 1
+            dropped += 1
         else:
-            stats["pieces_kept"] += 1
-            polys.append(g)
-    return polys
+            rings.append(g)
+    stats["pieces_dropped"] += dropped
+    if not rings:
+        return None
+    shells: list[list] = []  # [shell polygon, [hole rings]]
+    for ring in rings:
+        probe = ring.representative_point()
+        owner = next((sh for sh in shells if sh[0].contains(probe)), None)
+        if owner is None:
+            shapely.prepare(ring)
+            shells.append([ring, []])
+        else:
+            owner[1].append(ring.exterior.coords)
+    polys = [shapely.Polygon(sh.exterior.coords, holes) for sh, holes in shells]
+    if len(polys) > 1:
+        stats["multipart"] += 1
+        return shapely.MultiPolygon(polys)
+    stats["shell_with_holes" if shells[0][1] else "single_ring"] += 1
+    return polys[0]
 
 
 def parse_ewkt(ewkt: str, stats=None):
@@ -158,8 +191,8 @@ def parse_ewkt(ewkt: str, stats=None):
 
     reason is "ok", "repaired_split_ring", "not_27700", "kind_<KIND>" (e.g. points,
     which cannot describe a stretch of road) or "unparsable". A POLYGON whose rings
-    were published unclosed (see _split_ring_polygons) becomes a MultiPolygon of the
-    closed rings; stats (a Counter, optional) receives pieces_kept / pieces_dropped.
+    were published unclosed is rebuilt as shell(s) with holes (see _split_ring_polygons);
+    stats (a Counter, optional) receives the rebuild outcome and pieces_dropped.
     The result is not made valid: make_valid takes seconds on 30k-vertex zone
     polygons, and point-in-polygon and distance queries do not need it.
     """
@@ -174,9 +207,9 @@ def parse_ewkt(ewkt: str, stats=None):
     if g is not None:
         return g, "ok"
     if kind == "POLYGON":
-        polys = _split_ring_polygons(body, stats)
-        if polys:
-            return shapely.MultiPolygon(polys), "repaired_split_ring"
+        g = _split_ring_polygons(body, stats)
+        if g is not None:
+            return g, "repaired_split_ring"
     return None, "unparsable"
 
 
@@ -194,28 +227,43 @@ _CHARACTERISTICS = {
 }
 
 
-def _walk_dicts(obj):
-    """Every dict nested anywhere in obj, depth first."""
+# Plausibility bounds as for OSM values (slg.restrictions); vehicle length goes higher.
+_BOUNDS = {"height_m": LENGTH_RANGE_M, "width_m": LENGTH_RANGE_M,
+           "length_m": (2.0, 30.0), "weight_t": WEIGHT_RANGE_T}
+
+
+def _walk_dicts(obj, skip_negated: bool = False):
+    """Every dict nested anywhere in obj, depth first. With skip_negated, subtrees of a
+    negated condition (an exemption such as "except vehicles under 2 t") are skipped."""
     if isinstance(obj, dict):
+        if skip_negated and obj.get("negate") is True:
+            return
         yield obj
         for v in obj.values():
-            yield from _walk_dicts(v)
+            yield from _walk_dicts(v, skip_negated)
     elif isinstance(obj, list):
         for v in obj:
-            yield from _walk_dicts(v)
+            yield from _walk_dicts(v, skip_negated)
 
 
 def _limit_values(reg: dict) -> dict:
-    """First stated value of each characteristic. typeOfWeight is taken from the same
-    maximumGrossWeightCharacteristic object as the weight it qualifies."""
+    """First stated value of each characteristic, outside exemption subtrees. typeOfWeight
+    is taken from the same maximumGrossWeightCharacteristic object as its weight. Values
+    outside _BOUNDS become None and are counted in out_of_range."""
     out = {col: None for _, col in _CHARACTERISTICS.values()} | {"type_of_weight": None}
-    for d in _walk_dicts(reg):
+    for d in _walk_dicts(reg, skip_negated=True):
         for name, (key, col) in _CHARACTERISTICS.items():
             ch = d.get(name)
             if out[col] is None and isinstance(ch, dict) and ch.get(key) is not None:
                 out[col] = ch[key]
                 if col == "weight_t":
                     out["type_of_weight"] = ch.get("typeOfWeight")
+    out["out_of_range"] = 0
+    for col, (lo, hi) in _BOUNDS.items():
+        v = out[col]
+        if v is not None and not (isinstance(v, (int, float)) and lo <= v <= hi):
+            out[col] = None
+            out["out_of_range"] += 1
     return out
 
 
@@ -240,8 +288,8 @@ def _conditions(reg: dict) -> dict:
             for k in ("accessConditionType", "vehicleType", "vehicleUsage", "permitType"):
                 v = _find(d, k)
                 exemptions += v if isinstance(v, list) else [v] if v else []
-    return {"operator": operator, "has_negated_condition": negated,
-            "has_exemption": negated, "exemption": ";".join(map(str, exemptions)) or None}
+    return {"operator": operator, "has_exemption": negated,
+            "exemption": ";".join(map(str, exemptions)) or None}
 
 
 def restriction_provisions(record: dict) -> list[dict]:
@@ -262,8 +310,7 @@ def restriction_provisions(record: dict) -> list[dict]:
             "is_dynamic": reg.get("isDynamic"),
             **_time_validity(reg),
             **_conditions(reg),
-            "geometries": [s for s in _strings(prov.get("regulatedPlace", []))
-                           if s.startswith("SRID=")],
+            "geometries": _place_geometries(prov),
         })
     return out
 
@@ -278,13 +325,19 @@ PROHIBITION_TYPES = (
 
 
 def order_nature(provision: dict, regulation: dict) -> str:
-    """'temporary' / 'experimental' / 'permanent' / 'unknown' for a provision.
+    """'temporary' / 'experimental' / 'permanent' / 'revoked' / 'proposed' / 'unknown'.
 
     The production dump has no explicit nature on non-speed regulations; the provision's
     orderReportingPoint says which kind of order it is (ttroTtmo* = temporary order or
     notice, specialEvent* = event order, permanent* / experimentalMakingPermanent).
+    *Revocation revokes an order (not in force); *NoticeOfIntention is a proposal that
+    has not been made yet. Neither should raise a warning.
     """
     orp = provision.get("orderReportingPoint") or ""
+    if "Revocation" in orp:
+        return "revoked"
+    if "NoticeOfIntention" in orp:
+        return "proposed"
     if orp.startswith(("ttro", "specialEvent")):
         return "temporary"
     if orp == "experimentalMakingPermanent" or orp.startswith("permanent"):
@@ -342,7 +395,75 @@ def prohibition_provisions(record: dict) -> list[dict]:
             "has_recurring_period": _has_recurring(reg),
             "has_vehicle_condition": _find(reg, "vehicleCharacteristics") is not None,
             "has_access_condition": _find(reg, "accessCondition") is not None,
-            "geometries": [s for s in _strings(prov.get("regulatedPlace", []))
-                           if s.startswith("SRID=")],
+            "direction": _direction(prov),
+            "geometries": _place_geometries(prov),
         })
     return out
+
+
+def _direction(prov: dict) -> str | None:
+    """Direction of the regulated (non-diversion) linear place, e.g. startToEnd for a
+    one-way no-entry, or None when not stated."""
+    for place in _as_list(prov.get("regulatedPlace")):
+        if place.get("type") != "diversionRoute":
+            d = _find(place, "direction")
+            if isinstance(d, str):
+                return d
+    return None
+
+
+# --- time validity -----------------------------------------------------------------
+# D-TRO times (timeValidity start/end) are Europe/London local wall-clock times, while the
+# dump's Last-Modified header is GMT (one hour behind in BST), so the dump date is
+# converted to Europe/London before comparing. Comparisons are on ISO strings.
+# Not evaluated yet (Stage 4): recurring periods (validPeriod, days, times of day) and
+# the provision actionType (amendments / revokes of earlier provisions).
+LONDON = ZoneInfo("Europe/London")
+NOT_IN_FORCE_NATURES = ("revoked", "proposed")
+
+
+def dump_date(last_modified: str | None, fallback: datetime | None) -> str | None:
+    """ISO Europe/London local time the dump describes: its Last-Modified header (GMT),
+    else the newest record LastUpdated (taken as already local)."""
+    if last_modified:
+        try:
+            when = parsedate_to_datetime(last_modified)
+            return when.astimezone(LONDON).replace(tzinfo=None).isoformat()
+        except (TypeError, ValueError):
+            pass
+    return fallback.replace(microsecond=0).isoformat() if fallback else None
+
+
+def _iso(col) -> pd.Series:
+    """Column of ISO strings (any dtype, all-NaN float included) as nullable strings."""
+    return pd.Series(col, dtype="object").astype("string")
+
+
+def _cmp(col, as_of: str, op: str, missing: bool) -> pd.Series:
+    s = _iso(col)
+    res = s < as_of if op == "<" else s > as_of
+    return res.fillna(missing).astype(bool)  # missing value -> `missing`
+
+
+def ended(end, as_of: str) -> pd.Series:
+    """End strictly before as_of (an order ending exactly at as_of is still in force)."""
+    return _cmp(end, as_of, "<", False)
+
+
+def not_started(start, as_of: str) -> pd.Series:
+    """Start strictly after as_of."""
+    return _cmp(start, as_of, ">", False)
+
+
+def in_force(start, end, as_of: str) -> pd.Series:
+    """timeValidity covers as_of: start missing or <= as_of, end missing or >= as_of."""
+    return ~not_started(start, as_of) & ~ended(end, as_of)
+
+
+def order_in_force(df: pd.DataFrame, as_of: str) -> pd.Series:
+    """Provisions (nature, start, end columns) in force at as_of: inside their time
+    window, not revoked or proposed, and temporary orders must state a window."""
+    s, e = _iso(df["start"]), _iso(df["end"])
+    dated = (df["nature"] != "temporary").to_numpy() | s.notna().to_numpy() | e.notna().to_numpy()
+    nature_ok = ~df["nature"].isin(NOT_IN_FORCE_NATURES).to_numpy()
+    return pd.Series(in_force(s, e, as_of).to_numpy() & dated & nature_ok, index=df.index)

@@ -15,7 +15,6 @@ import csv
 import json
 import sys
 from datetime import datetime
-from email.utils import parsedate_to_datetime
 
 import pandas as pd
 import requests
@@ -24,8 +23,8 @@ import shapely
 from slg.agreement import compare, match_orders_to_ways, to_bng
 from slg.areas import AREAS
 from slg.coverage import annotate
-from slg.dtro import (from_env, parse_ewkt, prohibition_provisions, restriction_provisions,
-                      speed_provisions)
+from slg.dtro import (NOT_IN_FORCE_NATURES, dump_date, ended, from_env, not_started, order_in_force, parse_ewkt,
+                      prohibition_provisions, restriction_provisions, speed_provisions)
 from slg.paths import DATA, RESULTS
 
 OUT = RESULTS / "stage1" / "dtro"
@@ -95,26 +94,6 @@ def _ts(s: str | None):
         return datetime.strptime(s, "%m/%d/%Y %H:%M:%S")
     except (TypeError, ValueError):
         return None
-
-
-def dump_date(last_modified: str | None, fallback: datetime | None) -> str | None:
-    """ISO timestamp (UTC, naive) the dump describes: its Last-Modified header, else the
-    newest record LastUpdated. Used instead of the run date so outputs are reproducible."""
-    if last_modified:
-        try:
-            return parsedate_to_datetime(last_modified).replace(tzinfo=None).isoformat()
-        except (TypeError, ValueError):
-            pass
-    return fallback.isoformat() if fallback else None
-
-
-def in_force(df: pd.DataFrame, when: str) -> pd.Series:
-    """Provisions whose timeValidity covers `when` (ISO): start missing or <= when and
-    end missing or >= when. Temporary orders without any timeValidity are excluded."""
-    start_ok = df["start"].isna() | (df["start"] <= when)
-    end_ok = df["end"].isna() | (df["end"] >= when)
-    known = (df["nature"] != "temporary") | df["start"].notna() | df["end"].notna()
-    return start_ok & end_ok & known
 
 
 def load_orders(df: pd.DataFrame, outcomes: collections.Counter, pieces: collections.Counter):
@@ -189,22 +168,26 @@ def prohibition_area_counts(pdf: pd.DataFrame) -> pd.DataFrame:
         rows += [{"area": names[i], "regulation_type": p["regulation_type"], "nature": p["nature"],
                   "has_vehicle_condition": p["has_vehicle_condition"]} for i in hit]
     cols = ["area", "regulation_type", "nature", "has_vehicle_condition"]
-    return pd.DataFrame(rows, columns=cols).value_counts().rename("provisions").reset_index()         .sort_values(cols)
+    return (pd.DataFrame(rows, columns=cols).value_counts().rename("provisions")
+            .reset_index().sort_values(cols))
 
 
 def write_prohibitions(pdf: pd.DataFrame, as_of: str) -> None:
     """Closure / prohibition orders (red X sources): counts by type and order nature.
-    `ended` counts orders whose end is before as_of (the dump date, ISO)."""
+    ended / not_yet_started / in_force_at_dump are relative to as_of (the dump date,
+    Europe/London local ISO); revoked and proposed orders are never in force."""
     if pdf.empty:
         return
     flags = pdf.assign(
         has_end=pdf["end"].notna(),
-        # ISO strings compare correctly; ended = end already past at the dump date.
-        ended=pdf["end"].fillna("9999").lt(as_of),
+        ended=ended(pdf["end"], as_of),
+        not_yet_started=not_started(pdf["start"], as_of),
+        in_force_at_dump=order_in_force(pdf, as_of),
         geometries_n=pdf["geometries"].map(len))
     flags.groupby(["regulation_type", "nature", "has_vehicle_condition"]).agg(
         provisions=("provision_ref", "count"), dtros=("dtro_id", "nunique"),
         with_end=("has_end", "sum"), ended=("ended", "sum"),
+        not_yet_started=("not_yet_started", "sum"), in_force_at_dump=("in_force_at_dump", "sum"),
         recurring=("has_recurring_period", "sum"), access_exempt=("has_access_condition", "sum"),
         no_geometry=("geometries_n", lambda n: int((n == 0).sum())),
     ).reset_index().to_csv(OUT / "prohibition_counts.csv", index=False)
@@ -264,11 +247,13 @@ def main():
         values = rdf[["height_m", "width_m", "length_m", "weight_t"]].notna().any(axis=1)
         rdf.assign(has_value=values, temporary=rdf["nature"].eq("temporary"),
                    permanent=rdf["nature"].eq("permanent"),
-                   ended=rdf["end"].fillna("9999").lt(as_of or "9999")).groupby("regulation_type").agg(
+                   ended=ended(rdf["end"], as_of or "9999"),
+                   in_force_at_dump=order_in_force(rdf, as_of or "9999")).groupby("regulation_type").agg(
             n=("provision_ref", "count"),
             with_value=("has_value", "sum"), temporary=("temporary", "sum"),
             permanent=("permanent", "sum"), ended=("ended", "sum"),
-            with_exemption=("has_exemption", "sum"),
+            in_force_at_dump=("in_force_at_dump", "sum"),
+            with_exemption=("has_exemption", "sum"), out_of_range=("out_of_range", "sum"),
             min_height_m=("height_m", "min"), min_width_m=("width_m", "min"),
             min_length_m=("length_m", "min"), min_weight_t=("weight_t", "min"),
         ).to_csv(OUT / "restriction_counts.csv")
@@ -288,10 +273,14 @@ def main():
     results += agreement(df[df["nature"] == "permanent"], "permanent",
                          collections.Counter(), collections.Counter())
     if as_of:
-        results += agreement(df[in_force(df, as_of)], "in_force",
+        # Speed rows carry the speed object's own nature; revoked / proposed orders are
+        # only visible in order_nature, so let those override it for the in-force test.
+        sp = df.assign(nature=df["order_nature"].where(
+            df["order_nature"].isin(NOT_IN_FORCE_NATURES), df["nature"]))
+        results += agreement(df[order_in_force(sp, as_of)], "in_force",
                              collections.Counter(), collections.Counter())
     pd.DataFrame(results).to_csv(OUT / "agreement_by_area.csv", index=False)
-    pd.Series(outcomes | pieces, name="geometries", dtype="int64").rename_axis("parse_outcome") \
+    pd.Series({**outcomes, **pieces}, name="geometries", dtype="int64").rename_axis("parse_outcome") \
         .sort_index().to_csv(OUT / "geometry_parse.csv")
     print("dump date:", as_of, "| maximum-speed geometry parse outcomes:", dict(outcomes),
           "| split-ring pieces:", dict(pieces), "| malformed rows:", dict(malformed))

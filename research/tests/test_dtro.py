@@ -2,8 +2,13 @@ import collections
 
 import pytest
 
-from slg.dtro import (PROHIBITION_TYPES, DtroClient, order_nature, parse_ewkt,
-                      prohibition_provisions, restriction_provisions, speed_provisions)
+import numpy as np
+import pandas as pd
+from shapely.geometry import Point
+
+from slg.dtro import (PROHIBITION_TYPES, DtroClient, dump_date, ended, in_force, not_started,
+                      order_in_force, order_nature, parse_ewkt, prohibition_provisions,
+                      restriction_provisions, speed_provisions)
 
 RECORD_V5 = {
     "id": "abc",
@@ -120,23 +125,32 @@ def test_parse_ewkt_rejects_points_other_srids_and_garbage():
     assert parse_ewkt("SRID=27700;LINESTRING(0 0, x)") == (None, "unparsable")
 
 
-def test_parse_ewkt_split_rings_become_multipolygon():
-    # Production shape: separate rings each written unclosed, and the last piece ends
-    # on a stray copy of the polygon's very first vertex.
+def test_parse_ewkt_unclosed_shell_and_holes():
+    # Production shape: POLYGON((outer),(hole)) with every ring written unclosed and the
+    # last ring ending on a stray copy of the outer ring's first vertex.
     stats = collections.Counter()
-    g, why = parse_ewkt("SRID=27700;POLYGON((0 0, 10 0, 10 10, 0 10),"
-                        "(100 100, 120 100, 120 120, 100 120, 0 0))", stats)
+    g, why = parse_ewkt("SRID=27700;POLYGON((0 0, 100 0, 100 100, 0 100),"
+                        "(40 40, 60 40, 60 60, 40 60, 0 0))", stats)
     assert why == "repaired_split_ring"
-    assert g.geom_type == "MultiPolygon" and len(g.geoms) == 2
-    assert sorted(p.area for p in g.geoms) == [100, 400]
-    assert stats == {"pieces_kept": 2}
+    assert g.geom_type == "Polygon" and len(g.interiors) == 1
+    assert g.area == 100 * 100 - 20 * 20
+    assert not g.contains(Point(50, 50))     # inside the hole: not in the zone
+    assert g.contains(Point(10, 10))
+    assert stats == {"shell_with_holes": 1, "pieces_dropped": 0}
 
 
-def test_parse_ewkt_split_rings_drops_degenerate_pieces():
+def test_parse_ewkt_unclosed_rings_with_disjoint_part():
     stats = collections.Counter()
-    g, why = parse_ewkt("SRID=27700;POLYGON((0 0, 10 0, 10 10, 0 10),(50 50, 60 60, 0 0))", stats)
-    assert why == "repaired_split_ring" and g.geom_type == "MultiPolygon" and len(g.geoms) == 1
-    assert stats == {"pieces_kept": 1, "pieces_dropped": 1}
+    g, why = parse_ewkt("SRID=27700;POLYGON((0 0, 100 0, 100 100, 0 100),"
+                        "(40 40, 60 40, 60 60, 40 60),"
+                        "(200 0, 300 0, 300 100, 200 100),"
+                        "(240 40, 260 40, 260 60, 240 60),"
+                        "(500 500, 510 510, 0 0))", stats)
+    assert why == "repaired_split_ring" and g.geom_type == "MultiPolygon"
+    first, second = g.geoms
+    assert len(first.interiors) == 1 and len(second.interiors) == 1
+    assert not g.contains(Point(250, 50)) and g.contains(Point(210, 10))
+    assert stats == {"multipart": 1, "pieces_dropped": 1}
 
 
 RECORD_RESTRICT = {
@@ -239,7 +253,9 @@ def test_prohibition_provisions():
 
 
 @pytest.mark.parametrize("orp, dynamic, expected", [
-    ("ttroTtmoByNotice", False, "temporary"), ("ttroTtmoNoticeOfIntention", False, "temporary"),
+    ("ttroTtmoByNotice", False, "temporary"), ("ttroTtmoNoticeOfIntention", False, "proposed"),
+    ("permanentNoticeOfIntention", False, "proposed"), ("ttroTtmoRevocation", False, "revoked"),
+    ("ttroTtmoExtension", False, "temporary"),
     ("specialEventOrderNoticeOfMaking", False, "temporary"),
     ("experimentalNoticeOfMaking", False, "experimental"),
     ("experimentalMakingPermanent", False, "permanent"),
@@ -285,7 +301,85 @@ def test_restriction_provisions_carry_applicability_conditions():
     w, t = restriction_provisions(RECORD_RESTRICT_CONDITIONS)
     assert w["weight_t"] == 1.5 and w["type_of_weight"] == "maximumPermitted"
     assert w["nature"] == "permanent" and w["start"] == "2016-02-29T00:00:00" and w["end"] is None
-    assert w["operator"] == "and" and w["has_negated_condition"] is True
+    assert w["operator"] == "and"
     assert w["has_exemption"] is True and w["exemption"] == "loadingAndUnloading"
+    assert "has_negated_condition" not in w
     assert t["nature"] == "temporary" and t["end"] == "2026-11-03T23:59:00"
     assert t["has_exemption"] is False and t["exemption"] is None and t["operator"] is None
+
+
+def test_restriction_values_skip_exemption_subtrees_and_bounds():
+    rec = {"id": "r4", "schemaVersion": "3.5.1", "data": {"source": {"provision": [
+        {"reference": "E1", "orderReportingPoint": "permanentAmendment", "regulation": {
+            "generalRegulation": {"regulationType": "dimensionMaximumWeightStructural"},
+            "conditionSet": [{"operator": "and", "conditions": [
+                # "except vehicles under 2 t": the exempted class is not the limit
+                {"negate": True, "vehicleCharacteristics": {
+                    "maximumGrossWeightCharacteristic": {"grossVehicleWeight": 2.0}}},
+                {"vehicleCharacteristics": {"maximumGrossWeightCharacteristic": {
+                    "grossVehicleWeight": 7.5, "typeOfWeight": "maximumPermitted"}}}]}]},
+         "regulatedPlace": []},
+        {"reference": "B1", "orderReportingPoint": "permanentAmendment", "regulation": {
+            "generalRegulation": {"regulationType": "dimensionMaximumHeightStructural"},
+            "condition": [{"vehicleCharacteristics": {
+                "maximumHeightCharacteristic": {"vehicleHeight": 45}}}]},  # implausible
+         "regulatedPlace": []}]}}}
+    e, b = restriction_provisions(rec)
+    assert e["weight_t"] == 7.5 and e["type_of_weight"] == "maximumPermitted"
+    assert e["out_of_range"] == 0
+    assert b["height_m"] is None and b["out_of_range"] == 1
+
+
+def test_prohibition_direction_and_diversions_ignored():
+    rec = {"id": "n1", "schemaVersion": "3.5.1", "data": {"source": {"provision": [
+        {"reference": "N1", "orderReportingPoint": "permanentAmendment", "regulation": {
+            "generalRegulation": {"regulationType": "bannedMovementNoEntry"}},
+         "regulatedPlace": [
+             {"type": "regulationLocation", "linearGeometry": {
+                 "direction": "startToEnd", "linestring": "SRID=27700;LINESTRING(0 0, 1 1)"}},
+             {"type": "diversionRoute", "linearGeometry": {
+                 "direction": "bidirectional", "linestring": "SRID=27700;LINESTRING(5 5, 6 6)"}}]}]}}}
+    (p,) = prohibition_provisions(rec)
+    assert p["direction"] == "startToEnd"
+    assert p["geometries"] == ["SRID=27700;LINESTRING(0 0, 1 1)"]
+
+
+def test_dump_date_is_europe_london_local():
+    # Last-Modified is GMT; D-TRO times are Europe/London local (BST = GMT+1 in September).
+    assert dump_date("Sun, 06 Sep 2026 01:01:46 GMT", None) == "2026-09-06T02:01:46"
+    assert dump_date("Sun, 06 Dec 2026 01:01:46 GMT", None) == "2026-12-06T01:01:46"
+    assert dump_date(None, pd.Timestamp("2026-09-05 23:50:11").to_pydatetime()) == "2026-09-05T23:50:11"
+    assert dump_date(None, None) is None
+
+
+def test_in_force_window_and_boundaries():
+    start = pd.Series(["2026-01-01T00:00:00", None, "2026-09-06T00:00:00", "2026-09-07T00:00:00", None])
+    end = pd.Series([None, "2026-09-06T00:00:00", "2026-09-30T00:00:00", None, "2026-09-05T23:59:59"])
+    at = "2026-09-06T00:00:00"
+    assert in_force(start, end, at).tolist() == [True, True, True, False, False]
+    assert ended(end, at).tolist() == [False, False, False, False, True]
+    assert not_started(start, at).tolist() == [False, False, False, True, False]
+
+
+def test_in_force_all_nan_float_columns():
+    nan = pd.Series([np.nan, np.nan])  # float dtype, as pandas builds an all-missing column
+    assert in_force(nan, nan, "2026-09-06T00:00:00").tolist() == [True, True]
+    assert ended(nan, "2026-09-06T00:00:00").tolist() == [False, False]
+    assert not_started(nan, "2026-09-06T00:00:00").tolist() == [False, False]
+
+
+def test_order_in_force_excludes_revoked_proposed_and_undated_temporary():
+    df = pd.DataFrame({
+        "nature": ["permanent", "temporary", "temporary", "revoked", "proposed", "permanent"],
+        "start": ["2020-01-01T00:00:00", None, "2026-09-01T00:00:00", None, None, None],
+        "end": [None, None, "2026-09-10T00:00:00", None, None, "2025-01-01T00:00:00"]})
+    assert order_in_force(df, "2026-09-06T00:00:00").tolist() == [True, False, True, False, False, False]
+
+
+def test_speed_provisions_carry_order_nature():
+    rec = {"id": "s", "schemaVersion": "3.5.1", "data": {"source": {"provision": [
+        {"reference": "R", "orderReportingPoint": "ttroTtmoRevocation", "regulation": {
+            "speedLimitValueBased": {"type": "maximumSpeedLimit", "nature": "temporary", "mphValue": 30}},
+         "regulatedPlace": []}]}}}
+    (p,) = speed_provisions(rec)
+    assert p["nature"] == "temporary" and p["order_nature"] == "revoked"
