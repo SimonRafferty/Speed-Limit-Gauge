@@ -18,10 +18,11 @@ but **no `MAPILLARY_TOKEN` in `.env`**, so nothing has been measured yet.
 | Agreement with OSM | Not measured: no Mapillary client token yet. The script writes `results/stage1/mapillary/agreement_by_area.csv` when one is added. |
 
 Note for when it runs: `fetch_features` requests 0.05 deg cells (0.0025 deg^2, inside the
-0.01 deg^2 cap) with `limit=2000` and filters for "speed" client-side. In dense urban cells
-(London) more than 2,000 features of all types may exist, silently truncating the result.
-Passing `object_values=regulatory--maximum-speed-limit-*` (wildcards are supported) would
-avoid this.
+0.01 deg^2 cap) with `limit=2000`, filters the speed-limit sign classes server-side
+(`object_values`, all `--g1`..`--g5` variants), and splits any cell that returns exactly
+2,000 features into 4 and re-queries, up to 3 levels, counting any still-full cell as
+truncated (fixed in 0c028a6 / 19797cf after review; earlier the
+filter was client-side and dense cells could be silently truncated).
 
 ## Verdict
 **Validation only.** Detected signs are the best open, independent check on OSM speed
