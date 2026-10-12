@@ -1,6 +1,9 @@
+import collections
+
 import pytest
 
-from slg.dtro import DtroClient, speed_provisions
+from slg.dtro import (PROHIBITION_TYPES, DtroClient, order_nature, parse_ewkt,
+                      prohibition_provisions, restriction_provisions, speed_provisions)
 
 RECORD_V5 = {
     "id": "abc",
@@ -102,9 +105,6 @@ def test_speed_provisions_without_regulation_type_and_dict_regulation():
     assert out[0]["mph"] == 50 and out[0]["nature"] == "temporary"
 
 
-from slg.dtro import parse_ewkt
-
-
 def test_parse_ewkt_strips_srid_and_accepts_linear_kinds():
     g, why = parse_ewkt("SRID=27700;LINESTRING(0 0, 10 0)")
     assert why == "ok" and g.length == 10
@@ -120,14 +120,24 @@ def test_parse_ewkt_rejects_points_other_srids_and_garbage():
     assert parse_ewkt("SRID=27700;LINESTRING(0 0, x)") == (None, "unparsable")
 
 
-def test_parse_ewkt_repairs_outer_ring_split_into_pieces():
-    # Seen in production: one ring published as several unclosed pieces.
-    g, why = parse_ewkt("SRID=27700;POLYGON((0 0, 10 0, 10 10),(0 10, 0 0))")
+def test_parse_ewkt_split_rings_become_multipolygon():
+    # Production shape: separate rings each written unclosed, and the last piece ends
+    # on a stray copy of the polygon's very first vertex.
+    stats = collections.Counter()
+    g, why = parse_ewkt("SRID=27700;POLYGON((0 0, 10 0, 10 10, 0 10),"
+                        "(100 100, 120 100, 120 120, 100 120, 0 0))", stats)
     assert why == "repaired_split_ring"
-    assert g.geom_type == "Polygon" and g.area == 100
+    assert g.geom_type == "MultiPolygon" and len(g.geoms) == 2
+    assert sorted(p.area for p in g.geoms) == [100, 400]
+    assert stats == {"pieces_kept": 2}
 
 
-from slg.dtro import restriction_provisions
+def test_parse_ewkt_split_rings_drops_degenerate_pieces():
+    stats = collections.Counter()
+    g, why = parse_ewkt("SRID=27700;POLYGON((0 0, 10 0, 10 10, 0 10),(50 50, 60 60, 0 0))", stats)
+    assert why == "repaired_split_ring" and g.geom_type == "MultiPolygon" and len(g.geoms) == 1
+    assert stats == {"pieces_kept": 1, "pieces_dropped": 1}
+
 
 RECORD_RESTRICT = {
     "id": "r1", "schemaVersion": "5.0.0",
@@ -169,8 +179,6 @@ def test_restriction_provisions_dump_shape():
     out = restriction_provisions(rec)
     assert len(out) == 1 and out[0]["width_m"] == 2 and out[0]["height_m"] is None
 
-
-from slg.dtro import PROHIBITION_TYPES, order_nature, prohibition_provisions
 
 RECORD_PROHIBIT = {
     "id": "p1", "schemaVersion": "3.5.1",
@@ -241,3 +249,43 @@ def test_prohibition_provisions():
 ])
 def test_order_nature(orp, dynamic, expected):
     assert order_nature({"orderReportingPoint": orp}, {"isDynamic": dynamic}) == expected
+
+
+def test_speed_provisions_carry_time_validity():
+    rec = {"id": "t", "schemaVersion": "3.5.1", "data": {"source": {"provision": [
+        {"reference": "T", "regulation": {
+            "condition": [{"timeValidity": {"start": "2025-10-20T20:00:00", "end": "2025-10-24T03:00:00"}}],
+            "speedLimitValueBased": {"type": "maximumSpeedLimit", "nature": "temporary", "mphValue": 50}},
+         "regulatedPlace": []}]}}}
+    (p,) = speed_provisions(rec)
+    assert p["start"] == "2025-10-20T20:00:00" and p["end"] == "2025-10-24T03:00:00"
+
+
+RECORD_RESTRICT_CONDITIONS = {"id": "r3", "schemaVersion": "3.5.1", "data": {"source": {"provision": [
+    {"reference": "L1", "orderReportingPoint": "permanentNoticeOfMaking", "regulation": {
+        "isDynamic": False,
+        "generalRegulation": {"regulationType": "dimensionMaximumWeightStructural"},
+        "conditionSet": [{"operator": "and", "conditions": [
+            {"timeValidity": {"start": "2016-02-29T00:00:00"}},
+            # typeOfWeight must come from the same characteristic as the weight it qualifies
+            {"vehicleCharacteristics": {"maximumGrossWeightCharacteristic": {"typeOfWeight": "laden"}}},
+            {"vehicleCharacteristics": {"maximumGrossWeightCharacteristic": {
+                "typeOfWeight": "maximumPermitted", "grossVehicleWeight": 1.5}}},
+            {"negate": True, "accessCondition": {"accessConditionType": ["loadingAndUnloading"]}}]}]},
+     "regulatedPlace": []},
+    {"reference": "T1", "orderReportingPoint": "ttroTtmoByNotice", "regulation": {
+        "isDynamic": True,
+        "generalRegulation": {"regulationType": "dimensionMaximumWidth"},
+        "condition": {"timeValidity": {"start": "2026-09-01T00:00:00", "end": "2026-11-03T23:59:00"}}},
+     "regulatedPlace": []},
+]}}}
+
+
+def test_restriction_provisions_carry_applicability_conditions():
+    w, t = restriction_provisions(RECORD_RESTRICT_CONDITIONS)
+    assert w["weight_t"] == 1.5 and w["type_of_weight"] == "maximumPermitted"
+    assert w["nature"] == "permanent" and w["start"] == "2016-02-29T00:00:00" and w["end"] is None
+    assert w["operator"] == "and" and w["has_negated_condition"] is True
+    assert w["has_exemption"] is True and w["exemption"] == "loadingAndUnloading"
+    assert t["nature"] == "temporary" and t["end"] == "2026-11-03T23:59:00"
+    assert t["has_exemption"] is False and t["exemption"] is None and t["operator"] is None

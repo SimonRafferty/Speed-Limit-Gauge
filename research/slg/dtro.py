@@ -1,4 +1,5 @@
 """DfT D-TRO consumer client (OAuth2 client credentials) and speed-limit parser."""
+import collections
 import os
 import re
 import time
@@ -113,6 +114,7 @@ def speed_provisions(record: dict) -> list[dict]:
             "mph": detail.get("mphValue"),
             "nature": detail.get("nature"),
             "is_dynamic": reg.get("isDynamic"),
+            **_time_validity(reg),
             "geometries": [s for s in _strings(prov.get("regulatedPlace", []))
                            if s.startswith("SRID=")],
         })
@@ -127,14 +129,41 @@ def _try_wkt(body: str):
     return None if g is None or g.is_empty else g
 
 
-def parse_ewkt(ewkt: str):
+def _split_ring_polygons(body: str, stats) -> list:
+    """Polygons from a POLYGON body whose rings were published unclosed.
+
+    Production shape: several separate rings, each written without its closing
+    vertex, and the last ring ending on a stray copy of the first ring's start.
+    Junctions between consecutive pieces are hundreds of metres to km apart, so the
+    pieces are distinct rings: each is closed onto its own start. Pieces with fewer
+    than 3 distinct points are dropped.
+    """
+    pieces = [[c.strip() for c in r.split(",") if c.strip()] for r in _RING.findall(body)]
+    if len(pieces) > 1 and len(pieces[-1]) > 1 and pieces[-1][-1] == pieces[0][0]:
+        pieces[-1] = pieces[-1][:-1]
+    polys = []
+    for piece in pieces:
+        distinct = list(dict.fromkeys(piece))
+        g = _try_wkt(f"POLYGON(({', '.join(piece + [piece[0]])}))") if len(distinct) >= 3 else None
+        if g is None:
+            stats["pieces_dropped"] += 1
+        else:
+            stats["pieces_kept"] += 1
+            polys.append(g)
+    return polys
+
+
+def parse_ewkt(ewkt: str, stats=None):
     """D-TRO EWKT (BNG) -> (shapely geometry or None, reason).
 
     reason is "ok", "repaired_split_ring", "not_27700", "kind_<KIND>" (e.g. points,
-    which cannot describe a stretch of road) or "unparsable". Some publishers split
-    a polygon's single outer ring into several unclosed pieces; when the pieces
-    joined end to end close the ring, they are rejoined into one polygon.
+    which cannot describe a stretch of road) or "unparsable". A POLYGON whose rings
+    were published unclosed (see _split_ring_polygons) becomes a MultiPolygon of the
+    closed rings; stats (a Counter, optional) receives pieces_kept / pieces_dropped.
+    The result is not made valid: make_valid takes seconds on 30k-vertex zone
+    polygons, and point-in-polygon and distance queries do not need it.
     """
+    stats = collections.Counter() if stats is None else stats
     srid, _, body = ewkt.partition(";")
     if srid.strip().upper() != "SRID=27700":
         return None, "not_27700"
@@ -145,14 +174,9 @@ def parse_ewkt(ewkt: str):
     if g is not None:
         return g, "ok"
     if kind == "POLYGON":
-        pieces = [[c.strip() for c in r.split(",")] for r in _RING.findall(body)]
-        coords = [c for piece in pieces for c in piece]
-        if len(pieces) > 1 and coords and coords[0] == coords[-1]:
-            g = _try_wkt(f"POLYGON(({', '.join(coords)}))")
-            if g is not None:
-                # Not made valid: make_valid takes seconds on 30k-vertex zone polygons
-                # and distance queries do not need it.
-                return g, "repaired_split_ring"
+        polys = _split_ring_polygons(body, stats)
+        if polys:
+            return shapely.MultiPolygon(polys), "repaired_split_ring"
     return None, "unparsable"
 
 
@@ -161,41 +185,83 @@ RESTRICTION_TYPES = (
     "dimensionMaximumWidth", "dimensionMaximumLength",
     "dimensionMaximumWeightEnvironmental", "dimensionMaximumWeightStructural",
 )
-_VALUE_KEYS = {"vehicleHeight": "height_m", "vehicleWidth": "width_m",
-               "vehicleLength": "length_m", "grossVehicleWeight": "weight_t",
-               "typeOfWeight": "type_of_weight"}
+# characteristic object -> (value key, output column)
+_CHARACTERISTICS = {
+    "maximumHeightCharacteristic": ("vehicleHeight", "height_m"),
+    "maximumWidthCharacteristic": ("vehicleWidth", "width_m"),
+    "maximumLengthCharacteristic": ("vehicleLength", "length_m"),
+    "maximumGrossWeightCharacteristic": ("grossVehicleWeight", "weight_t"),
+}
 
 
-def _first_values(obj, found=None) -> dict:
-    """First occurrence of each _VALUE_KEYS key anywhere in obj."""
-    found = {} if found is None else found
+def _walk_dicts(obj):
+    """Every dict nested anywhere in obj, depth first."""
     if isinstance(obj, dict):
-        for k, v in obj.items():
-            if k in _VALUE_KEYS and _VALUE_KEYS[k] not in found and not isinstance(v, (dict, list)):
-                found[_VALUE_KEYS[k]] = v
-            else:
-                _first_values(v, found)
+        yield obj
+        for v in obj.values():
+            yield from _walk_dicts(v)
     elif isinstance(obj, list):
         for v in obj:
-            _first_values(v, found)
-    return found
+            yield from _walk_dicts(v)
+
+
+def _limit_values(reg: dict) -> dict:
+    """First stated value of each characteristic. typeOfWeight is taken from the same
+    maximumGrossWeightCharacteristic object as the weight it qualifies."""
+    out = {col: None for _, col in _CHARACTERISTICS.values()} | {"type_of_weight": None}
+    for d in _walk_dicts(reg):
+        for name, (key, col) in _CHARACTERISTICS.items():
+            ch = d.get(name)
+            if out[col] is None and isinstance(ch, dict) and ch.get(key) is not None:
+                out[col] = ch[key]
+                if col == "weight_t":
+                    out["type_of_weight"] = ch.get("typeOfWeight")
+    return out
+
+
+def _time_validity(reg: dict) -> dict:
+    tv = _find(reg, "timeValidity")
+    tv = tv if isinstance(tv, dict) else {}
+    return {"start": tv.get("start"), "end": tv.get("end")}
+
+
+def _conditions(reg: dict) -> dict:
+    """Condition-tree facts that decide whether a restriction applies to a vehicle.
+
+    A negated condition is an exemption ("except loading and unloading"); its text is
+    the negated condition's access/vehicle types joined with ';'.
+    """
+    operator, negated, exemptions = None, False, []
+    for d in _walk_dicts(reg):
+        if operator is None and isinstance(d.get("operator"), str):
+            operator = d["operator"]
+        if d.get("negate") is True:
+            negated = True
+            for k in ("accessConditionType", "vehicleType", "vehicleUsage", "permitType"):
+                v = _find(d, k)
+                exemptions += v if isinstance(v, list) else [v] if v else []
+    return {"operator": operator, "has_negated_condition": negated,
+            "has_exemption": negated, "exemption": ";".join(map(str, exemptions)) or None}
 
 
 def restriction_provisions(record: dict) -> list[dict]:
-    """One row per height/width/length/weight regulation in a D-TRO record."""
+    """One row per height/width/length/weight regulation in a D-TRO record, with the
+    order nature, time validity and condition facts that decide applicability."""
     out = []
     for prov, reg, rtype in _regulations(record):
         if rtype not in RESTRICTION_TYPES:
             continue
-        values = _first_values(reg)
         out.append({
             "dtro_id": record.get("id"),
             "schema_version": record.get("schemaVersion"),
             "provision_ref": prov.get("reference"),
             "action": prov.get("actionType"),
             "regulation_type": rtype,
-            **{col: values.get(col) for col in _VALUE_KEYS.values()},
+            **_limit_values(reg),
+            "nature": order_nature(prov, reg),
             "is_dynamic": reg.get("isDynamic"),
+            **_time_validity(reg),
+            **_conditions(reg),
             "geometries": [s for s in _strings(prov.get("regulatedPlace", []))
                            if s.startswith("SRID=")],
         })

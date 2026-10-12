@@ -64,3 +64,51 @@ def compare(rows: list[dict]) -> dict:
         else:
             c["osm_lower"] += 1
     return c
+
+
+_AREAL = ("Polygon", "MultiPolygon")
+
+
+def match_orders_to_ways(ways, orders, mphs, buffer_m: float = 10,
+                         min_fraction: float = 0.5) -> dict[int, int]:
+    """Assign order speed limits to ways: {way_idx: mph}. All geometries in BNG metres.
+
+    - Area orders (Polygon / MultiPolygon, e.g. 20 mph zones): a way matches only if
+      its midpoint lies inside the order (distance 0).
+    - Linear orders: a way matches only if at least min_fraction of its length lies
+      within buffer_m of the order, so a road merely crossing or touching the order
+      does not inherit its limit.
+    Where several orders match a way the lowest mph is kept (conservative: never show
+    a higher limit than an order says).
+    """
+    ways = list(ways)
+    if not ways or not len(orders):
+        return {}
+    best: dict[int, int] = {}
+
+    def keep(w: int, mph) -> None:
+        best[w] = min(best.get(w, mph), mph)
+
+    areal = [i for i, g in enumerate(orders) if g.geom_type in _AREAL]
+    linear = [i for i, g in enumerate(orders) if g.geom_type not in _AREAL]
+    if areal:
+        mids = shapely.line_interpolate_point(ways, 0.5, normalized=True)
+        tree = STRtree([orders[i] for i in areal])
+        for i in areal:
+            shapely.prepare(orders[i])  # zone polygons can have 30k vertices
+        # Candidate pairs by bounding box, then an exact point-in-polygon test.
+        m_idx, o_idx = tree.query(mids)
+        for m, o in zip(m_idx, o_idx):
+            order = orders[areal[o]]
+            if shapely.intersects(order, mids[m]):
+                keep(int(m), mphs[areal[o]])
+    if linear:
+        buffers = [orders[i].buffer(buffer_m) for i in linear]
+        tree = STRtree(ways)
+        for b, buf in enumerate(buffers):
+            shapely.prepare(buf)
+            for w in tree.query(buf, predicate="intersects"):
+                way = ways[w]
+                if way.length > 0 and way.intersection(buf).length >= min_fraction * way.length:
+                    keep(int(w), mphs[linear[b]])
+    return best

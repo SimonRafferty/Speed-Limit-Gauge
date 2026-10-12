@@ -46,9 +46,14 @@ Schema versions seen (`schema_versions.csv`): 3.5.1 (107,407), 4.0.0 (35,612), 3
   regulation. Consequently `/events` and `/search` summaries list `regulationType: []` for them,
   so speed orders cannot be filtered server-side by type.
 - `regulation` is a single object rather than a list in ~47k provisions (`condition` likewise in v4).
-- 1,699 speed-limit polygons have their single outer ring split into several unclosed pieces
-  (`POLYGON((a … ),( … a))`); joining the pieces end to end restores the ring
-  (`repaired_split_ring` in `geometry_parse.csv`). Some are 30k-vertex area polygons (20 mph zones).
+- 1,699 maximum-speed POLYGON geometries fail to parse because every ring is written
+  **unclosed**, and the last ring ends on a stray copy of the polygon's very first vertex
+  (`POLYGON((a … ),( … ),( … a))`). The pieces are separate rings, not fragments of one: the
+  gaps between consecutive pieces are hundreds of metres to ~11 km. `parse_ewkt` drops the stray
+  closing vertex, closes each piece onto its own start and returns a MultiPolygon
+  (`repaired_split_ring`); pieces with fewer than 3 distinct points are dropped. On this dump:
+  10,782 rings kept, 0 dropped (`geometry_parse.csv`). Results are not passed through
+  `make_valid` (seconds per 30k-vertex zone polygon; point-in-polygon does not need it).
 - 218 speed geometries are POINTs (allowed pre-v5), unusable for matching a road; skipped.
 
 ## Speed provisions (`type_counts.csv`, `speed_provisions.csv`)
@@ -67,36 +72,56 @@ temporary 10 (336), 20 (277), 30 (852), 40 (762), 50 (46). No minimum-speed prov
 
 ## Agreement with OSM (`agreement_by_area.csv`)
 
-Method: midpoint of each OSM way in the test areas, nearest D-TRO maximum-speed geometry within
-15 m (all tied nearest kept, lowest mph wins), scored by `slg.agreement.compare`.
-Subset `all` uses every maximum-speed provision; `permanent` excludes temporary orders.
+Method (`slg.agreement.match_orders_to_ways`, scored by `slg.agreement.compare`), using
+provisions with a numeric mph and type `maximumSpeedLimit`:
+- area orders (20 mph zones etc.): a way matches only if its midpoint is **inside** the polygon;
+- linear orders: a way matches only if **at least 50 % of its length** lies within 10 m of the order;
+- several matching orders: the **lowest** mph is kept (conservative);
+- `highway=service` and `highway=track` ways are excluded (`excluded_ways` column);
+- a way tagged only `maxspeed:forward/backward` counts as `osm_unusable`, not `osm_untagged`
+  (`compare` only sees one mph per way, so directional values are not compared).
+
+Subsets: `all` is **historical** — every order in the dump, including roadworks limits long
+expired; `permanent` keeps permanent orders only; `in_force` keeps orders whose timeValidity
+covers the dump date (2026-09-06T01:01:46, from Last-Modified): start ≤ date and no end or
+end ≥ date. The window is applied to permanent orders too (287 permanent speed provisions carry
+an end date), and temporary orders without any timeValidity are excluded.
 
 | area | subset | matched ways | agree | OSM higher | OSM lower | OSM untagged |
 |---|---|---|---|---|---|---|
-| manchester_centre | all | 156 | 20 | 2 | 27 | 107 |
-| manchester_centre | permanent | 88 | 3 | 2 | 0 | 83 |
-| crawley | all | 42 | 8 | 18 | 0 | 16 |
-| a27_chichester_worthing | all | 32 | 0 | 8 | 1 | 23 |
-| m23_a23_crawley_brighton | all | 7 | 0 | 3 | 0 | 4 |
-| m25_surrey | all | 1 | 0 | 1 | 0 | 0 |
+| manchester_centre | all | 47 | 10 | 1 | 8 | 28 |
+| manchester_centre | permanent | 28 | 2 | 1 | 0 | 25 |
+| manchester_centre | in_force | 47 | 10 | 1 | 8 | 28 |
+| crawley | all | 19 | 4 | 14 | 0 | 1 |
+| crawley | permanent | 0 | | | | |
+| crawley | in_force | 8 | 3 | 4 | 0 | 1 |
+| a27_chichester_worthing | all | 13 | 0 | 7 | 0 | 6 |
+| a27_chichester_worthing | permanent | 0 | | | | |
+| a27_chichester_worthing | in_force | 3 | 0 | 3 | 0 | 0 |
+| m23_a23_crawley_brighton | all | 5 | 0 | 3 | 0 | 2 |
+| m23_a23_crawley_brighton | in_force | 0 | | | | |
 
-All other areas (London Camden/Islington, Horsham, Midhurst, Cardiff, Powys, Edinburgh, A9) match
-**nothing**. Only Manchester has any permanent-order matches. The "OSM higher" cases on the
-Sussex/Surrey roads are temporary (roadworks) limits. D-TRO coverage of our test areas is
-therefore negligible today; it is England-only (Wales may adopt; Scotland/NI not in scope).
+All other areas (London Camden/Islington, Horsham, Midhurst, M25 Surrey, Cardiff, Powys,
+Edinburgh, A9) match **nothing** in any subset. Only Manchester has permanent-order matches, and
+most of those are ways OSM leaves untagged. "OSM higher" in Crawley and on the A27 is from
+temporary (roadworks) limits that were in force on the dump date. D-TRO coverage of our test
+areas is therefore negligible today; it is England-only (Wales may adopt; Scotland/NI not in scope).
 
 ## Height, width and weight orders (`restriction_counts.csv`, `restriction_provisions.csv`)
 
-355 dimension provisions; almost all are temporary street-works orders with **no limit value**:
+355 dimension provisions; only 17 state a **limit value**. Nature is from the provision's
+`orderReportingPoint` (`order_nature`), not `isDynamic`; "ended" is relative to the dump date.
+Each row also carries start/end, the condition-set `operator`, and `has_exemption` / `exemption`
+for negated conditions (e.g. `loadingAndUnloading` = "except for loading").
 
-| type | n | with value | dynamic (temporary) | min |
-|---|---|---|---|---|
-| dimensionMaximumWeightStructural | 186 | 13 | 131 | 1.5 t |
-| dimensionMaximumHeightStructural | 84 | 0 | 14 | — |
-| dimensionMaximumWidth | 81 | 4 | 14 | 1.8 m |
-| dimensionMaximumLength | 4 | 0 | 2 | — |
+| type | n | with value | temporary | permanent | ended | with exemption | min |
+|---|---|---|---|---|---|---|---|
+| dimensionMaximumWeightStructural | 186 | 13 | 131 | 55 | 67 | 1 | 1.5 t |
+| dimensionMaximumHeightStructural | 84 | 0 | 14 | 70 | 10 | 0 | — |
+| dimensionMaximumWidth | 81 | 4 | 14 | 67 | 6 | 0 | 1.8 m |
+| dimensionMaximumLength | 4 | 0 | 2 | 2 | 2 | 0 | — |
 
-Weight values: 3.5 t ×11, 1.5 t, 7.5 t (`typeOfWeight: maximumPermitted`); widths 1.8, 2.0 ×2, 2.1 m.
+Weight values: 3.5 t ×11, 1.5 t (except loading), 7.5 t (`typeOfWeight: maximumPermitted`, read from the same characteristic as the weight); widths 1.8, 2.0 ×2, 2.1 m.
 No `dimensionMaximumHeightWithTRO` or `dimensionMaximumWeightEnvironmental` at all.
 Separately (one-off survey, not in the script): 1,313 `movementOrderProhibitedAccess` regulations
 carry a `grossVehicleWeight` condition (HGV access bans, mostly 3.5 t / 7.5 t) — a larger

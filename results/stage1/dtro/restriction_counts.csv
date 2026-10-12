@@ -1,5 +1,5 @@
-regulation_type,n,with_value,dynamic,min_height_m,min_width_m,min_length_m,min_weight_t
-dimensionMaximumHeightStructural,84,0,14,,,,
-dimensionMaximumLength,4,0,2,,,,
-dimensionMaximumWeightStructural,186,13,131,,,,1.5
-dimensionMaximumWidth,81,4,14,,1.8,,
+regulation_type,n,with_value,temporary,permanent,ended,with_exemption,min_height_m,min_width_m,min_length_m,min_weight_t
+dimensionMaximumHeightStructural,84,0,14,70,10,0,,,,
+dimensionMaximumLength,4,0,2,2,2,0,,,,
+dimensionMaximumWeightStructural,186,13,131,55,67,1,,,,1.5
+dimensionMaximumWidth,81,4,14,67,6,0,,1.8,,
