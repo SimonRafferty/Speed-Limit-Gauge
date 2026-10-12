@@ -18,9 +18,10 @@ Waveshare ESP32-S3-Touch-AMOLED-1.75, GPS variant ("-G"). Arrives approx. 2026-1
 | Memory | 8 MB PSRAM, 16 MB flash |
 | Display | 1.75" 466×466 round AMOLED, CO5300 over QSPI |
 | Touch | CST9217 (product page) or FT3168 (wiki) — confirm on arrival |
-| GPS | Quectel LC76G, read over I2C in Waveshare demo 09; pins/address in Waveshare "Mylibrary" pin-macro file — confirm on arrival |
+| GPS | Quectel LC76G on the shared I2C bus (SDA GPIO15, SCL GPIO14), addresses 0x50 (write) / 0x54 (read); reset via TCA9554 P7; UART to GPIO17/18 only if R15/R16 fitted (NC by default). **V_BCKP → R33 (0 Ω) → VCC-RTC = AXP2101 RTCLDO**, which stays alive from the LiPo when the main rails are off, so ephemeris/time/position survive power-off (hot/warm start) |
 | Other | QMI8658 IMU, PCF85063 RTC, AXP2101 PMIC, TCA9554 IO expander |
-| Storage | microSD (TF) slot — confirmed on schematic 2026-10-12. Demo pins GPIO 41 (CS) / 1 (MOSI) / 3 (MISO) / 2 (SCK); check no clash with GPS I2C |
+| Storage | microSD (TF) slot — confirmed on schematic. GPIO1 CMD/MOSI, GPIO2 CLK, GPIO3 D0/MISO, GPIO41 D3/CS; Waveshare BSP mounts it as 1-bit SDMMC. No clash with I2C (14/15), display QSPI (4–7, 38, 12, 39) or touch (11, 40) |
+| Battery | LiPo on the AXP2101 (J1, MX1.25) — user is fitting one. Board thermistor RP4 (10 kΩ) on the AXP2101 TS pin allows temperature-limited charging |
 | Toolchain | esp32 Arduino core 3.1.0, LVGL 8.4.0, SensorLib 0.3.1, XPowersLib 0.2.6 |
 
 ## 3. Decisions
@@ -129,7 +130,9 @@ Device update behaviour (all over the cellular hotspot while driving; the device
 - Patches are applied as an overlay on read (patch record wins over base record), and periodically merged into rewritten tiles.
 - Every write goes to a new file and is renamed into place; the previous tile/patch is kept until the new one verifies (hash). This second layer covers what the speed gate cannot: cranking brown-outs and connector faults.
 - Firmware OTA: downloaded in the background into the inactive app partition, marked for boot, takes effect at next power-on; ESP-IDF rollback reverts if the new image fails to confirm itself.
-- Optional hardware safety net (not relied on): a small LiPo on the AXP2101 header would give hold-up time to finish writes after ignition-off.
+- LiPo hold-up (user is fitting one): covers cranking brown-outs and gives time to finish a write after ignition-off.
+
+Ignition-off handling (required now that a LiPo is fitted, or the board would run until the cell is flat): the AXP2101 VBUS-removal interrupt (AXP_IRQ) triggers an orderly shutdown — finish or abandon the current SD write, unmount SD, display off, then AXP2101 power-off of the main rails. The LC76G keeps its state on V_BCKP (RTCLDO) for a hot/warm start next time. VBUS returning at ignition-on powers the board up. Charging is limited by temperature via the TS thermistor (under-dash heat). Confirm on the bench that RTCLDO stays up after AXP2101 power-off (measure at R33).
 
 Stage 5 measures: GB base size, bytes per tile, SD read latency and write time per tile (on hardware), weekly `maxspeed` churn in OSM and D-TRO (to set patch cadence and expected patch size), bytes per update, and mobile data per month; plus the share of driving time above 35 mph on the user's traces (how much commit opportunity there is).
 
@@ -137,7 +140,8 @@ Failure behaviour: no signal ever → base + last applied patches, with data age
 
 ## 7. Firmware and UI (after board arrives)
 
-- LC76G over I2C at the highest supported rate (1–10 Hz, confirm on board).
+- LC76G over I2C at the highest supported rate (1–10 Hz, confirm on board). The I2C bus is shared with touch, IMU, RTC, IO expander, AXP2101 and codecs: choose one bus speed all devices support and check NMEA throughput at the chosen rate.
+- Measure time to first fix after a power cycle with the LiPo fitted (expected hot/warm < 5 s) versus a cold start (26–35 s).
 - `core::update()` in its own task; LVGL 8.4 UI.
 - Task watchdog + `esp_reset_reason()` logging (user default for ESP32 firmware).
 - LVGL: delete non-current screens on screen switch (Td5 display "many faces" lesson).
@@ -174,6 +178,6 @@ Interaction: vertical swipe cycles Car → Commercial → Trailer. Selected mode
 
 - Touch controller (CST9217 vs FT3168).
 - LC76G I2C address, pins, maximum update rate.
-- microSD pins vs GPS I2C pins (schematic); SD read latency per tile.
+- SD read latency per tile; RTCLDO staying up after AXP2101 power-off (R33); TTFF hot vs cold.
 - JCB yellow appearance on AMOLED.
 - Car-radio hotspot SSID/password, and whether it provides internet without a tethered phone.
