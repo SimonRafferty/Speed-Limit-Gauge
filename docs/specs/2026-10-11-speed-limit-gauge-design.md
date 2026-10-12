@@ -20,7 +20,7 @@ Waveshare ESP32-S3-Touch-AMOLED-1.75, GPS variant ("-G"). Arrives approx. 2026-1
 | Touch | CST9217 (product page) or FT3168 (wiki) — confirm on arrival |
 | GPS | Quectel LC76G, read over I2C in Waveshare demo 09; pins/address in Waveshare "Mylibrary" pin-macro file — confirm on arrival |
 | Other | QMI8658 IMU, PCF85063 RTC, AXP2101 PMIC, TCA9554 IO expander |
-| Storage | Product page lists a TF (microSD) slot; user believes there is none — confirm on arrival. Design budget assumes onboard flash only |
+| Storage | microSD (TF) slot — confirmed on schematic 2026-10-12. Demo pins GPIO 41 (CS) / 1 (MOSI) / 3 (MISO) / 2 (SCK); check no clash with GPS I2C |
 | Toolchain | esp32 Arduino core 3.1.0, LVGL 8.4.0, SensorLib 0.3.1, XPowersLib 0.2.6 |
 
 ## 3. Decisions
@@ -33,7 +33,8 @@ Waveshare ESP32-S3-Touch-AMOLED-1.75, GPS variant ("-G"). Arrives approx. 2026-1
 | Default vehicle class | Car / dual-purpose. Rationale: Defender Hard Top is 4WD with unladen weight ≤ 2,040 kg, so it meets the dual-purpose definition (C&U Regs 1986 reg. 3) despite N1 tax class |
 | Vehicle modes | Car 60/70/70, Commercial (goods ≤ 7.5 t) 50/60/70, Trailer 50/60/60 (single / dual / motorway). Modes change only national-limit defaults, never posted limits |
 | Test traces | Synthetic + public OSM traces now; user records real drives (GPX) during the week of 2026-10-11 |
-| WiFi | Compiled-in credential list (WiFiMulti): user's phone hotspot now; car-radio hotspot to be added when SSID/password are found |
+| WiFi | Compiled-in credential list (WiFiMulti): user's phone hotspot, home WiFi (updates while parked), car-radio hotspot when SSID/password are found |
+| Data | Offline-first: full-GB base on microSD; OSM + D-TRO changes delivered as small pre-conflated patch files from static hosting |
 
 ## 4. Architecture
 
@@ -57,7 +58,7 @@ Data flow:
 OSM GB extract, D-TRO, other sources
         → research/ pipeline (Stage 2 inference: P(limit) per way and direction)
         → tile builder (Stage 5): versioned compact binary tiles
-        → tile cache on device (flash / PSRAM)
+        → full-GB base tiles on microSD + patch overlay (PSRAM working cache)
 GPS fix + vehicle mode → core::update() → {limit | unknown, P(20..70), basis, road, data age}
 ```
 
@@ -102,22 +103,31 @@ Fuse match probabilities with per-way limit distributions. Handle `:forward`/`:b
 
 Stage 2 uses OSM-tagged ways as truth. For user recordings, build a hand-checked sample: Street View spot checks at limit transitions plus Mapillary detections, so Stage 6 measures accuracy rather than agreement with OSM.
 
-## 6. Data delivery and cache (plan stage 5)
+## 6. Data delivery: offline base + online patches (plan stage 5)
 
-Budget: 16 MB flash ≈ 3 MB app + 3 MB OTA + ~9–10 MB LittleFS for tiles; 8 MB PSRAM as working cache. All of GB is expected to exceed the flash budget (to be measured), so flash holds a pinned home region plus recently fetched tiles. If a TF card is present, a full-GB set becomes an option.
+Revised 2026-10-12 after the microSD slot was confirmed. The device is **offline-first**: it never needs a signal to work; connectivity is only used to receive updates.
 
-Tiles: fixed grid, cell size chosen in Stage 5 from measured bytes per tile (expected 2–5 km). Delta-encoded integer geometry, simplified to a tolerance Stage 3 shows is harmless to matching.
+Storage: full-GB base tile set on microSD (expected 100–300 MB, to be measured; a high-endurance/industrial card is recommended for under-dash temperatures). 8 MB PSRAM holds the working set of tiles around the vehicle. Onboard flash holds firmware, NVS settings and the version manifest only.
 
-Sources compared in Stage 5: (i) pre-built tiles on static hosting (GitHub Releases/Pages), rebuilt periodically on the PC; (ii) live Overpass queries converted on device. Expected winner (i), to be confirmed by measured latency, bytes per km, cache sizes (home area, all GB) and usage-policy compliance.
+Tiles: fixed grid, cell size chosen in Stage 5 from measured bytes per tile and read latency from SD (expected 2–5 km). Delta-encoded integer geometry, simplified to a tolerance Stage 3 shows is harmless to matching. Each way has a stable id so patches can address it.
 
-Cache policy:
+Update pipeline (runs on the PC, later possibly a scheduled job; never on the device):
 
-- Pinned home region (West Sussex + ~50 km, sized from measured bytes per km), never evicted.
-- Look-ahead: while WiFi is up, fetch tiles in a corridor ahead of the heading (~20 km ahead, ±5 km), prioritised by distance, resumable; each tile written atomically.
-- LRU eviction for the rest.
-- Refresh: when online, compare against a small index file of tile versions; replace only changed tiles.
+1. **Base build:** full GB from the Geofabrik GB extract → Stage 2 inference → tiles + manifest (base version, build date, per-tile hash).
+2. **Patch build** on a regular cadence: OSM changes (Geofabrik daily `.osc` diffs) and D-TRO changes (incremental if the API supports it, else diff of successive bulk dumps) → conflated onto OSM ways on the PC → a small patch file of changed way records (add / replace / delete), numbered sequentially against a base version.
+3. Publish base, patches and manifest on static hosting (e.g. GitHub Releases).
 
-Signal loss: no signal at start-up is fine within cache. Leaving the cache with no signal gives "unknown", never a guess. When signal returns, the look-ahead queue resumes.
+The device does not talk to D-TRO directly: conflating BNG geometries onto roads is heavy, and OAuth credentials do not belong on the device.
+
+Device update behaviour:
+
+- On WiFi (home WiFi while parked, phone hotspot, car-radio hotspot): fetch the manifest; download any missing patches in sequence; occasionally download a new base when the manifest says the patch chain is too long.
+- Patches are applied as an overlay on read (patch record wins over base record), and periodically merged into rewritten tiles.
+- Every write goes to a new file and is renamed into place; the previous base/patch set is kept until the new one verifies (hash). Power loss at ignition-off can never leave a half-written tile in use. The base is otherwise read-only.
+
+Stage 5 measures: GB base size, bytes per tile, SD read latency per tile (on hardware), weekly `maxspeed` churn in OSM and D-TRO (to set patch cadence and expected patch size), and bytes per update.
+
+Failure behaviour: no signal ever → base + last applied patches, with data age reported in the output. SD card missing or unreadable → every reading is "unknown" plus an SD-fault icon; never a guess.
 
 ## 7. Firmware and UI (after board arrives)
 
@@ -141,7 +151,8 @@ Interaction: vertical swipe cycles Car → Commercial → Trailer. Selected mode
 
 ## 8. Error handling
 
-- Corrupt or version-mismatched tile: rejected and re-fetched; that cell reads unknown meanwhile.
+- Corrupt tile (hash mismatch): fall back to the previous verified version if present, else that cell reads unknown; flagged for re-download when online.
+- SD card missing/unreadable: unknown everywhere, SD-fault icon.
 - Failed flash write: previous tile kept (atomic replace).
 - GPS dropout: hold last limit, then unknown after timeout (timeout tuned in Stage 4).
 - Low-confidence estimate: shown, but overspeed cue suppressed.
@@ -157,6 +168,6 @@ Interaction: vertical swipe cycles Car → Commercial → Trailer. Selected mode
 
 - Touch controller (CST9217 vs FT3168).
 - LC76G I2C address, pins, maximum update rate.
-- Presence of TF slot.
+- microSD pins vs GPS I2C pins (schematic); SD read latency per tile.
 - JCB yellow appearance on AMOLED.
 - Car-radio hotspot SSID/password, and whether it provides internet without a tethered phone.

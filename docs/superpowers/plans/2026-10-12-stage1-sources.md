@@ -1605,7 +1605,7 @@ git add results/stage1/mapillary 2>/dev/null; git commit -m "feat(stage1): Mapil
 
 Desk research, one card per source, in `results/stage1/sources/<source>.md`. Use WebSearch/WebFetch. Where a source is openly downloadable and carries speed limits, download a sample for one test area into `data/stage1/<source>/` and run it through `slg.agreement` the same way as Tasks 11–12 (point or line geometry → `to_bng` if WGS84 → `snap_to_ways` → `compare`), saving `agreement.csv` beside the card.
 
-Sources: `osm` (summarise Tasks 7–8), `dtro` (docs-based until credentials arrive), `mapillary`, `national_highways` (motorway/trunk limits, variable/smart-motorway data), `os_open_roads` (form of way: dual carriageway, slip, roundabout — input for Stage 2, not limits), `wales_20mph` (DataMapWales default-20 layer and post-2024 reversions), `scotland_20mph` (Transport Scotland / council layers), `west_sussex_cc` (council open data), `commercial` (TomTom/HERE/Google: licence and cost only, as a reference point).
+Sources: `osm` (summarise Tasks 7–8), `dtro` (docs-based until credentials arrive; must answer: is there an incremental / changed-since query, or only the full `/dtros/all` dump? how big is the dump? — this sets the patch-build design in Stage 5), `mapillary`, `national_highways` (motorway/trunk limits, variable/smart-motorway data), `os_open_roads` (form of way: dual carriageway, slip, roundabout — input for Stage 2, not limits), `wales_20mph` (DataMapWales default-20 layer and post-2024 reversions), `scotland_20mph` (Transport Scotland / council layers), `west_sussex_cc` (council open data), `commercial` (TomTom/HERE/Google: licence and cost only, as a reference point).
 
 **Files:**
 - Create: `results/stage1/sources/<source>.md` × 9
@@ -1664,7 +1664,7 @@ Sections, all filled from measured outputs (no estimates presented as measuremen
 4. Live-query cost: Overpass latency and bytes/km from `probe.csv`.
 5. Agreement: D-TRO and Mapillary tables (or "pending credentials/token"), with the hand-checked disagreement tally.
 6. Failed avenues: anything that did not work and why.
-7. Implications for Stage 2 (which road classes need inference most, by km) and Stage 5 (bytes/km baseline).
+7. Implications for Stage 2 (which road classes need inference most, by km) and Stage 5 (bytes/km baseline; how OSM and D-TRO changes can be picked up incrementally for the offline-base + patch design).
 8. Footprint notes: none on device yet; record extract sizes and per-area parquet sizes.
 
 - [ ] **Step 3: Commit**
