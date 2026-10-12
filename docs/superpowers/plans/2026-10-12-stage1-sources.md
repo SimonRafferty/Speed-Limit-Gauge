@@ -11,7 +11,7 @@
 **Spec:** `docs/specs/2026-10-11-speed-limit-gauge-design.md` §5 (Stage 1) and the plan brief `Speed Limit Estimator Plan.md`.
 
 **Conventions:**
-- All commands run from the repo root `C:\Users\simon\Documents\Arduino\Sketchbook\Td5 ECU\Speed Limit Gauge` in Git Bash.
+- All commands run from the repo root in Git Bash (Windows).
 - Python is always `.venv/Scripts/python` (the repo venv).
 - `data/` is git-ignored (large downloads). `results/` is committed.
 - Each stage's results folder ends with a `notes.md`: what was tried, what happened, failed avenues included.
