@@ -66,27 +66,49 @@ def _strings(obj):
             yield from _strings(v)
 
 
-def speed_provisions(record: dict) -> list[dict]:
-    """One row per speed-limit regulation in a D-TRO record (schema v3 and v5 shapes)."""
+def _as_list(obj) -> list:
+    """The dump stores some arrays as a single object; normalise to a list of dicts."""
+    items = obj if isinstance(obj, list) else [obj] if obj else []
+    return [o for o in items if isinstance(o, dict)]
+
+
+def _regulations(record: dict):
+    """Yield (provision, regulation, regulation_type) for every regulation in a record.
+
+    The type is read from regulationType (v5), generalRegulation.regulationType
+    (pre-v5) or, failing both, inferred from a top-level speedLimit* object: the
+    production dump (schema 3.5/4.0) stores speed regulations with no
+    regulationType at all.
+    """
     source = record.get("data", {}).get("source", {})
+    for prov in _as_list(source.get("provision")):
+        for reg in _as_list(prov.get("regulation")):
+            general = reg.get("generalRegulation")
+            rtype = reg.get("regulationType") or (
+                general.get("regulationType") if isinstance(general, dict) else None)
+            if not rtype:
+                rtype = next((t for t in SPEED_TYPES if isinstance(reg.get(t), dict)), None)
+            yield prov, reg, rtype
+
+
+def speed_provisions(record: dict) -> list[dict]:
+    """One row per speed-limit regulation in a D-TRO record (schema v3, v4 and v5 shapes)."""
     out = []
-    for prov in source.get("provision", []):
-        for reg in prov.get("regulation", []):
-            rtype = reg.get("regulationType") or reg.get("generalRegulation", {}).get("regulationType")
-            if rtype not in SPEED_TYPES:
-                continue
-            detail = reg.get(rtype, {})
-            out.append({
-                "dtro_id": record.get("id"),
-                "schema_version": record.get("schemaVersion"),
-                "provision_ref": prov.get("reference"),
-                "action": prov.get("actionType"),
-                "regulation_type": rtype,
-                "limit_type": detail.get("type"),
-                "mph": detail.get("mphValue"),
-                "nature": detail.get("nature"),
-                "is_dynamic": reg.get("isDynamic"),
-                "geometries": [s for s in _strings(prov.get("regulatedPlace", []))
-                               if s.startswith("SRID=")],
-            })
+    for prov, reg, rtype in _regulations(record):
+        if rtype not in SPEED_TYPES:
+            continue
+        detail = reg.get(rtype, {})
+        out.append({
+            "dtro_id": record.get("id"),
+            "schema_version": record.get("schemaVersion"),
+            "provision_ref": prov.get("reference"),
+            "action": prov.get("actionType"),
+            "regulation_type": rtype,
+            "limit_type": detail.get("type"),
+            "mph": detail.get("mphValue"),
+            "nature": detail.get("nature"),
+            "is_dynamic": reg.get("isDynamic"),
+            "geometries": [s for s in _strings(prov.get("regulatedPlace", []))
+                           if s.startswith("SRID=")],
+        })
     return out

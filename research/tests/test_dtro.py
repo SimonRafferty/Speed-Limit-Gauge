@@ -74,3 +74,27 @@ def test_client_caches_token_and_gets_all_url():
     c.all_records_url()
     assert s.posts == 1
     assert s.gets[0] == ("https://dtro-integration.dft.gov.uk/v1/dtros/all", "Bearer tok")
+
+
+# Shapes seen in the production /dtros/all dump (schema 3.5.x / 4.0.0): speed
+# regulations carry no regulationType at all, only the speedLimit* object, and
+# "regulation" may be a single object instead of a list.
+RECORD_DUMP = {
+    "id": "d1", "schemaVersion": "4.0.0",
+    "data": {"source": {"provision": [
+        {"reference": "T1", "actionType": "fullAmendment",
+         "regulation": {"isDynamic": True,
+                        "speedLimitValueBased": {"type": "maximumSpeedLimit", "nature": "temporary",
+                                                 "mphValue": 50}},
+         "regulatedPlace": [{"linearGeometry": {"linestring": "SRID=27700;LINESTRING(1 1, 2 2)"}}]},
+        {"reference": "T2", "regulation": {"generalRegulation": {"regulationType": "miscRoadClosure"}},
+         "regulatedPlace": []},
+    ]}},
+}
+
+
+def test_speed_provisions_without_regulation_type_and_dict_regulation():
+    out = speed_provisions(RECORD_DUMP)
+    assert [p["provision_ref"] for p in out] == ["T1"]
+    assert out[0]["regulation_type"] == "speedLimitValueBased"
+    assert out[0]["mph"] == 50 and out[0]["nature"] == "temporary"
